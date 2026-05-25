@@ -1,0 +1,83 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtualenv & uv
+.venv/
+venv/
+env/
+.uv/
+.uv-cache/
+
+# Tests, lint, type-check caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+coverage.xml
+.hypothesis/
+
+# IDE & éditeurs
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Secrets — NE JAMAIS COMMITTER
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+*_credentials.json
+*_secrets.yaml
+
+# Data lourde RF — passer par MinIO, jamais par git
+data/
+captures/
+recordings/
+exports/
+*.sigmf-data
+*.sigmf-meta
+*.iq
+*.cfile
+*.bin
+*.dat
+*.raw
+*.wav
+*.h5
+*.hdf5
+*.parquet
+
+# Logs
+*.log
+logs/
+
+# Docker overrides locaux
+docker-compose.override.yml
+docker-compose.local.yml
+minio_data/
+
+# Notebooks Jupyter
+.ipynb_checkpoints/
