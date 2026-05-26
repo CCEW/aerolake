@@ -17,6 +17,9 @@ dependencies = [
     "structlog>=24.1.0",
 ]
 
+[project.scripts]
+aerolake-healthcheck = "aerolake.scripts.healthcheck:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
