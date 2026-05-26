@@ -1,8 +1,9 @@
 """S3 storage client for the AeroLake project.
 
-Thin wrapper around boto3 that knows about MinIO quirks (custom endpoint,
-path-style addressing, region placeholder) and exposes a stable API to the
-rest of the application.
+Thin wrapper around boto3 that works with both AWS S3 and MinIO. When the
+``s3_endpoint`` setting is empty, boto3 uses the official AWS endpoint
+(also what moto intercepts during tests). When set, boto3 talks to the
+custom endpoint (typically a local MinIO instance).
 """
 
 from __future__ import annotations
@@ -36,26 +37,34 @@ class StorageClient:
         self._client = self._build_client()
 
     def _build_client(self):
-        """Construct the boto3 S3 client configured for MinIO.
+        """Construct the boto3 S3 client.
 
-        Key differences from a default AWS S3 client:
-        - explicit ``endpoint_url`` pointing at the MinIO instance
-        - path-style addressing (MinIO does not support virtual-host style
-          for arbitrary bucket names out of the box)
-        - signature version v4 (required by MinIO)
+        When ``s3_endpoint`` is empty, boto3 uses the official AWS S3
+        endpoint. This is what we want both for production AWS deployments
+        and for testing with moto (which intercepts the default endpoint).
+
+        When ``s3_endpoint`` is set (e.g. ``http://localhost:9000`` for
+        local MinIO), we pass it explicitly so boto3 talks to that server
+        instead of AWS.
+
+        Other configuration:
+        - signature version v4 (required by MinIO, default on AWS)
+        - path-style addressing (required by MinIO for arbitrary bucket names)
+        - 3 automatic retries with exponential backoff for transient failures
         """
-        return boto3.client(
-            "s3",
-            endpoint_url=self._settings.s3_endpoint,
-            aws_access_key_id=self._settings.s3_access_key,
-            aws_secret_access_key=self._settings.s3_secret_key.get_secret_value(),
-            region_name=self._settings.s3_region,
-            config=Config(
+        kwargs: dict = {
+            "aws_access_key_id": self._settings.s3_access_key,
+            "aws_secret_access_key": self._settings.s3_secret_key.get_secret_value(),
+            "region_name": self._settings.s3_region,
+            "config": Config(
                 signature_version="s3v4",
                 s3={"addressing_style": "path"},
                 retries={"max_attempts": 3, "mode": "standard"},
             ),
-        )
+        }
+        if self._settings.s3_endpoint:
+            kwargs["endpoint_url"] = self._settings.s3_endpoint
+        return boto3.client("s3", **kwargs)
 
     @property
     def bucket(self) -> str:
@@ -65,7 +74,7 @@ class StorageClient:
     # --- Health and metadata ---------------------------------------------
 
     def health_check(self) -> bool:
-        """Verify MinIO is reachable and the configured bucket is accessible.
+        """Verify the bucket is reachable and accessible.
 
         Returns True on success, raises StorageError on any failure.
         """
@@ -75,7 +84,7 @@ class StorageClient:
         except EndpointConnectionError as exc:
             log.error("storage.healthcheck.unreachable")
             raise StorageError(
-                f"Cannot reach MinIO at {self._settings.s3_endpoint}"
+                f"Cannot reach S3 endpoint {self._settings.s3_endpoint!r}"
             ) from exc
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "Unknown")
