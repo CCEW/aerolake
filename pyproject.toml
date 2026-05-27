@@ -10,15 +10,18 @@ authors = [
 dependencies = [
     "boto3>=1.34.0",
     "botocore>=1.34.0",
+    "numpy>=2.0.0",
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
     "python-dotenv>=1.0.0",
     "rich>=13.7.0",
+    "sigmf>=1.2.0",
     "structlog>=24.1.0",
 ]
 
 [project.scripts]
 aerolake-healthcheck = "aerolake.scripts.healthcheck:main"
+aerolake-producer = "aerolake.scripts.producer:main"
 
 [dependency-groups]
 dev = [
