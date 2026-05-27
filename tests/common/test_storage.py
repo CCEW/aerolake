@@ -95,3 +95,41 @@ def test_delete_object_removes_it(storage_client: StorageClient) -> None:
 def test_bucket_property_returns_configured_bucket(storage_client: StorageClient) -> None:
     """The bucket property should return the value from settings."""
     assert storage_client.bucket == "test-bucket"
+
+
+# --- Metadata and tags ---------------------------------------------------
+
+def test_upload_bytes_stores_metadata(storage_client) -> None:
+    """Metadata passed to upload_bytes is retrievable via head_object."""
+    storage_client.upload_bytes(
+        "with_meta.txt",
+        b"hello",
+        metadata={"sample-rate": "2000000", "session-id": "abc12345"},
+    )
+    fetched = storage_client.get_object_metadata("with_meta.txt")
+    assert fetched["sample-rate"] == "2000000"
+    assert fetched["session-id"] == "abc12345"
+
+
+def test_upload_bytes_stores_tags(storage_client) -> None:
+    """Tags passed to upload_bytes are retrievable via get_object_tagging."""
+    storage_client.upload_bytes(
+        "with_tags.txt",
+        b"hello",
+        tags={"signal-type": "gnss_l1", "quality": "raw"},
+    )
+    fetched = storage_client.get_object_tags("with_tags.txt")
+    assert fetched["signal-type"] == "gnss_l1"
+    assert fetched["quality"] == "raw"
+
+
+def test_upload_bytes_without_metadata_returns_empty_dict(storage_client) -> None:
+    """An object uploaded without metadata returns an empty metadata dict."""
+    storage_client.upload_bytes("no_meta.txt", b"hello")
+    assert storage_client.get_object_metadata("no_meta.txt") == {}
+
+
+def test_upload_bytes_without_tags_returns_empty_dict(storage_client) -> None:
+    """An object uploaded without tags returns an empty tag dict."""
+    storage_client.upload_bytes("no_tags.txt", b"hello")
+    assert storage_client.get_object_tags("no_tags.txt") == {}
