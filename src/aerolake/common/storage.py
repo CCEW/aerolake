@@ -105,6 +105,30 @@ class StorageClient:
                 return False
             raise StorageError(f"head_object failed for {key!r}") from exc
 
+    def get_object_metadata(self, key: str) -> dict[str, str]:
+        """Return the ``x-amz-meta-*`` metadata of an object (HEAD request).
+
+        Does NOT download the object body. Cheap and fast — useful for
+        consumers that need to check parameters before deciding to read.
+        """
+        try:
+            response = self._client.head_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            raise StorageError(f"head_object failed for {key!r}") from exc
+        # boto3 normalizes 'x-amz-meta-foo' headers into the 'Metadata' dict
+        # with lowercase keys and the prefix stripped.
+        return dict(response.get("Metadata", {}))
+
+    def get_object_tags(self, key: str) -> dict[str, str]:
+        """Return the S3 object tags as a dict."""
+        try:
+            response = self._client.get_object_tagging(
+                Bucket=self.bucket, Key=key
+            )
+        except ClientError as exc:
+            raise StorageError(f"get_object_tagging failed for {key!r}") from exc
+        return {item["Key"]: item["Value"] for item in response.get("TagSet", [])}
+
     # --- Upload and download ---------------------------------------------
 
     def upload_bytes(
@@ -112,20 +136,58 @@ class StorageClient:
         key: str,
         data: bytes,
         content_type: str = "application/octet-stream",
+        *,
+        metadata: dict[str, str] | None = None,
+        tags: dict[str, str] | None = None,
     ) -> None:
-        """Upload raw bytes to the bucket under the given key."""
+        """Upload raw bytes to the bucket under the given key.
+
+        Parameters
+        ----------
+        key
+            S3 object key under the configured bucket.
+        data
+            Raw bytes to upload.
+        content_type
+            HTTP Content-Type header (default ``application/octet-stream``).
+        metadata
+            Optional dict of key/value strings stored as ``x-amz-meta-*``
+            HTTP headers. Accessible via head_object without downloading
+            the body. Keys must be ASCII; values are coerced to str.
+        tags
+            Optional dict of key/value strings attached as S3 object tags.
+            Tags are indexable on the MinIO side and can drive lifecycle
+            rules. Up to 10 tags per object; keys 1-128 chars,
+            values 0-256 chars.
+        """
         log = logger.bind(bucket=self.bucket, key=key, size=len(data))
-        try:
-            self._client.put_object(
-                Bucket=self.bucket,
-                Key=key,
-                Body=data,
-                ContentType=content_type,
+        put_kwargs: dict = {
+            "Bucket": self.bucket,
+            "Key": key,
+            "Body": data,
+            "ContentType": content_type,
+        }
+        if metadata:
+            # boto3 expects str -> str. Coerce defensively in case someone
+            # passes numbers.
+            put_kwargs["Metadata"] = {k: str(v) for k, v in metadata.items()}
+        if tags:
+            # S3 tags are passed as URL-encoded query string at upload time.
+            # boto3 takes a plain string here; we build it manually.
+            put_kwargs["Tagging"] = "&".join(
+                f"{k}={v}" for k, v in tags.items()
             )
+
+        try:
+            self._client.put_object(**put_kwargs)
         except ClientError as exc:
             log.error("storage.upload.failed", error=str(exc))
             raise StorageError(f"Failed to upload {key!r}") from exc
-        log.info("storage.upload.ok")
+        log.info(
+            "storage.upload.ok",
+            has_metadata=bool(metadata),
+            has_tags=bool(tags),
+        )
 
     def download_bytes(self, key: str) -> bytes:
         """Download an object and return its full content as bytes."""
