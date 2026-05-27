@@ -129,10 +129,33 @@ def capture_and_upload(
         meta_bytes=len(capture.meta_bytes),
     )
 
-    # --- 3. Upload -------------------------------------------------------
-    # We upload the metadata FIRST. If a race-condition consumer sees the
-    # data, the meta is guaranteed to be there already and the capture is
-    # interpretable. The reverse order would expose orphan bytes briefly.
+# --- 3. Build metadata and tags --------------------------------------
+    # HTTP metadata: technical values needed by the consumer to interpret
+    # the bytes. Accessible via HEAD without downloading anything.
+    # Stored as x-amz-meta-* headers.
+    data_metadata = {
+        "sample-rate": str(int(signal.sample_rate)),
+        "center-freq": str(int(signal.center_freq)),
+        "session-id": session_id,
+        "datatype": "cf32_le",
+        "sample-count": str(len(signal.samples)),
+    }
+
+    # S3 tags: categorical attributes for search and lifecycle policies.
+    # Quality starts as "raw"; a future consumer-side validation step will
+    # promote it to "validated" (see ADR-005 when written).
+    data_tags = {
+        "signal-type": signal_type,
+        "recorder": "aerolake-producer-synthetic",
+        "hardware": "synthetic",
+        "quality": "raw",
+    }
+
+    # --- 4. Upload -------------------------------------------------------
+    # Meta is uploaded first: if a consumer races between the two puts, it
+    # sees the .sigmf-meta JSON (interpretable on its own) rather than
+    # orphan bytes. The .sigmf-data carries both metadata and tags; the
+    # .sigmf-meta does not (the JSON itself is the description).
     client.upload_bytes(
         meta_key,
         capture.meta_bytes,
@@ -142,13 +165,14 @@ def capture_and_upload(
         data_key,
         capture.data_bytes,
         content_type="application/octet-stream",
+        metadata=data_metadata,
+        tags=data_tags,
     )
     log.info(
         "producer.capture.uploaded",
         data_key=data_key,
         meta_key=meta_key,
     )
-
     return CaptureResult(
         session_id=session_id,
         data_key=data_key,
