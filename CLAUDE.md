@@ -69,8 +69,10 @@ a "curated" capture. Four packages under `src/aerolake/`:
   `checker.py` (`QualityChecker`/`QualityReport`) applies configurable `QualityThresholds` to
   those metrics and produces a pass/fail verdict.
 
-`scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`), both using `rich` for
-output and documented exit codes (0 ok / 1 storage failure / 2 config-or-unexpected).
+`scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `validate.py`,
+`catalog.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
+2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
+structlog logs go to stderr, keeping stdout clean for results (`--json`, tables).
 
 ### Conventions that span multiple files
 
