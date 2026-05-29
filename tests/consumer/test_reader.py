@@ -16,6 +16,7 @@ from aerolake.consumer.reader import CaptureReader
 from aerolake.producer.synthetic import generate_tone
 from aerolake.quality.checker import QualityChecker, QualityThresholds
 
+
 @pytest.fixture
 def reader(storage_client: StorageClient) -> CaptureReader:
     """A CaptureReader using the moto-mocked storage_client fixture."""

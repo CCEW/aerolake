@@ -9,11 +9,7 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
-from aerolake.common.config import Settings
 from aerolake.scripts.healthcheck import main
-
 
 # --- Success path --------------------------------------------------------
 

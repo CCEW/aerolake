@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sigmf import SigMFFile
 
 from aerolake.producer.synthetic import SyntheticSignal
-
 
 # SigMF datatype string for np.complex64.
 # Format: complex float 32-bit little-endian. See SigMF spec, "Datatypes".
@@ -91,7 +90,7 @@ def encode(
             {
                 "core:sample_start": 0,
                 "core:frequency": float(signal.center_freq),
-                "core:datetime": datetime.now(timezone.utc).isoformat(),
+                "core:datetime": datetime.now(UTC).isoformat(),
             }
         ],
         "annotations": [],

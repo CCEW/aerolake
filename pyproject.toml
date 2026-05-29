@@ -52,3 +52,15 @@ ignore = ["E501"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.12"
+# The pydantic plugin teaches mypy that BaseSettings fields are populated from
+# the environment, so `Settings()` with no args is valid (not a missing-arg).
+plugins = ["pydantic.mypy"]
+
+# Third-party libraries that ship no type stubs / py.typed marker. Without this
+# mypy emits "missing library stubs" errors for imports we don't control.
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "sigmf.*"]
+ignore_missing_imports = true

@@ -12,7 +12,6 @@ import pytest
 from aerolake.common.config import Settings
 from aerolake.common.storage import StorageClient, StorageError
 
-
 # --- health_check --------------------------------------------------------
 
 def test_health_check_returns_true_when_bucket_exists(storage_client: StorageClient) -> None:

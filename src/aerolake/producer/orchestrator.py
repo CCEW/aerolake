@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
@@ -93,7 +93,7 @@ def capture_and_upload(
     # 8 hex chars = ~4 billion possibilities, plenty for our usage.
     # We also embed the UTC date in the path so listing per-day is trivial.
     session_id = uuid.uuid4().hex[:8]
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
     base_key = f"{signal_type}/{date_str}/{session_id}/capture"
     data_key = f"{base_key}.sigmf-data"
     meta_key = f"{base_key}.sigmf-meta"

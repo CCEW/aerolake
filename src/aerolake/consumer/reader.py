@@ -20,7 +20,6 @@ import numpy as np
 import structlog
 
 from aerolake.common.storage import StorageClient, StorageError
-
 from aerolake.quality.checker import QualityChecker, QualityReport
 
 logger = structlog.get_logger(__name__)
@@ -258,15 +257,14 @@ class CaptureReader:
             sample_rate = content.sigmf_meta.get("global", {}).get(
                 "core:sample_rate", 0
             )
+            # Default to 0.0 so that, with no usable sample rate, the
+            # completeness check fails loudly AND the metadata check flags the
+            # missing core:sample_rate field.
+            expected_duration_s = 0.0
             if sample_rate > 0:
                 # Derive duration from the actual sample count. This is the
                 # "trust the data" fallback.
                 expected_duration_s = len(content.samples) / sample_rate
-            else:
-                # No usable sample rate — set 0.0 so the completeness check
-                # will fail loudly, and the metadata check will also flag the
-                # missing core:sample_rate field.
-                expected_duration_s = 0.0
 
         # --- Step 3 — Run the quality assessment ---------------------------
         # Use the injected checker, or build a default one with standard

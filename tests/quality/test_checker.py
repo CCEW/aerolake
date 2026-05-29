@@ -11,14 +11,11 @@ and accumulates failures.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from aerolake.quality.checker import (
     QualityChecker,
-    QualityReport,
     QualityThresholds,
 )
-
 
 # ===========================================================================
 # Helpers

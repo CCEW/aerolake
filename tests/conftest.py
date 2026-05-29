@@ -13,7 +13,6 @@ from moto import mock_aws
 from aerolake.common.config import Settings
 from aerolake.common.storage import StorageClient
 
-
 # --- Configuration --------------------------------------------------------
 
 @pytest.fixture

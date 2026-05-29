@@ -20,10 +20,8 @@ from __future__ import annotations
 import math
 
 import numpy as np
-import pytest
 
 from aerolake.quality.metrics import (
-    CLIPPING_THRESHOLD_DEFAULT,
     compute_clipping_ratio,
     compute_dc_offset_iq,
     compute_rms_power_dbfs,
@@ -31,7 +29,6 @@ from aerolake.quality.metrics import (
     count_invalid_samples,
     validate_sigmf_metadata,
 )
-
 
 # ===========================================================================
 # Helpers — small factories to keep individual tests focused on behavior

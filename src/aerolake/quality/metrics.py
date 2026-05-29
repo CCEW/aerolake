@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -371,7 +370,8 @@ def compute_sample_completeness(
     # This is the contract: capture for D seconds at rate R should yield
     # exactly D * R samples. Any deviation is suspect.
     # We round to an integer because sample counts are always whole.
-    expected_count = int(round(expected_duration_s * sample_rate))
+    # round() with no second argument already returns an int, so no int() cast.
+    expected_count = round(expected_duration_s * sample_rate)
 
     # Step 2 — Guard against division by zero.
     # If somehow expected_count is 0 (would be a programming error,
