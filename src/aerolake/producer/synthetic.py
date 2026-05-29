@@ -47,6 +47,7 @@ def generate_tone(
     sample_rate: float,
     center_freq: float,
     tone_offset_hz: float = 100_000.0,
+    tone_amplitude: float = 0.1,
     snr_db: float = 20.0,
     seed: int | None = None,
 ) -> SyntheticSignal:
@@ -67,6 +68,13 @@ def generate_tone(
     tone_offset_hz
         Frequency of the tone relative to center, in Hz. Default 100 kHz,
         which is far enough from DC to be clearly distinguishable.
+    tone_amplitude
+        Linear amplitude of the tone, in the normalized cf32_le scale where
+        1.0 is full scale (0 dBFS). Default 0.1, which corresponds to
+        -20 dBFS: a realistic recording level that leaves headroom and
+        avoids clipping, unlike a full-scale 1.0 tone. Relationship:
+        dBFS = 20 * log10(tone_amplitude), so 0.1 -> -20 dBFS, 0.05 ->
+        -26 dBFS, 1.0 -> 0 dBFS (full scale, will clip).
     snr_db
         Signal-to-noise ratio in dB. Higher = cleaner. Default 20 dB.
     seed
@@ -84,8 +92,14 @@ def generate_tone(
     # Pure tone in the complex (IQ) domain.
     # exp(2j*pi*f*t) is a unit-amplitude single-frequency signal that exists
     # ONLY at frequency f, with no mirror image at -f (unlike a real cosine).
-    tone = np.exp(2j * np.pi * tone_offset_hz * t).astype(np.complex64)
-
+# Pure tone scaled to the requested amplitude. np.exp(...) alone has
+    # unit amplitude (magnitude 1.0 = full scale), which would clip. We
+    # multiply by tone_amplitude to set a realistic recording level. The
+    # magnitude of every sample becomes exactly tone_amplitude, so the RMS
+    # power is 20*log10(tone_amplitude) dBFS (e.g. 0.1 -> -20 dBFS).
+    tone = (
+        tone_amplitude * np.exp(2j * np.pi * tone_offset_hz * t)
+    ).astype(np.complex64)
     # Additive White Gaussian Noise (AWGN), independent on I and Q channels.
     # noise_amplitude is set so the resulting SNR (in dB) matches snr_db.
     noise_amplitude = 10 ** (-snr_db / 20)
@@ -101,6 +115,7 @@ def generate_tone(
         center_freq=center_freq,
         description=(
             f"Synthetic tone at {tone_offset_hz / 1000:.1f} kHz offset "
-            f"from {center_freq / 1e6:.3f} MHz, SNR {snr_db:.0f} dB"
+            f"from {center_freq / 1e6:.3f} MHz, "
+            f"{20 * np.log10(tone_amplitude):.0f} dBFS, SNR {snr_db:.0f} dB"
         ),
     )
