@@ -1,0 +1,139 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+AeroLake is an RF data-lakehouse pipeline (LASSENA project). It captures radio-frequency
+signals, encodes them as [SigMF](https://github.com/sigmf/SigMF) (a `.sigmf-data` binary blob +
+a `.sigmf-meta` JSON sidecar), stores them in a MinIO bucket, and reads/validates them back.
+Real SDR capture and a ZeroMQ streaming bus are on the roadmap but **not yet built** — today the
+producer generates synthetic signals and everything is batch.
+
+## Commands
+
+This project uses [uv](https://github.com/astral-sh/uv). Python 3.12+. `src/` layout
+(`module-root = src`, so the importable package is `aerolake`, living at `src/aerolake/`).
+
+```bash
+uv sync                          # install deps (incl. dev group)
+
+# Start local storage (run from docker/; reads ../.env)
+cd docker && docker compose up -d   # MinIO API :9000, console :9001, auto-creates the bucket
+
+# Entry points (defined in pyproject [project.scripts])
+uv run aerolake-healthcheck          # verify .env + MinIO reachable + bucket accessible
+uv run aerolake-producer --preset gnss-l1 --duration 1.0   # generate+upload a synthetic capture
+
+# Quality / linting / tests
+uv run ruff check .              # lint  (ruff config in pyproject; line-length 100, E501 ignored)
+uv run ruff format .             # format
+uv run mypy src                  # type-check
+uv run pytest                    # full suite (verbose + short tracebacks via pyproject addopts)
+uv run pytest tests/quality/test_metrics.py            # one file
+uv run pytest tests/quality/test_metrics.py::test_name # one test
+uv run pytest -k clipping        # tests matching an expression
+```
+
+There is no real CLI for the consumer/quality flow yet — `CaptureReader.validate()` is exercised
+through tests and is the basis for a planned batch-validation CLI.
+
+## Configuration
+
+Settings come from environment variables prefixed `AEROLAKE_`, loaded via
+`aerolake.common.config.Settings` (pydantic-settings). The `.env` at the project root feeds local
+dev; real env vars override it. Always read settings through `get_settings()` (it is
+`lru_cache`d — `.env` is parsed once per process). Copy `.env.example` to `.env` to start.
+`s3_secret_key` is a `SecretStr` so it never leaks into logs/tracebacks.
+
+## Architecture
+
+The pipeline is **Producer → MinIO → Consumer**, with a **Quality** layer that gates what becomes
+a "curated" capture. Four packages under `src/aerolake/`:
+
+- **`common/`** — shared infra. `config.py` (Settings). `storage.py` (`StorageClient`, the *single*
+  chokepoint for all S3 access; every read/write goes through it).
+- **`producer/`** — `synthetic.py` generates IQ samples (`generate_tone`), `sigmf_writer.py`
+  encodes them to SigMF bytes (`encode`), `orchestrator.py` (`capture_and_upload`) ties
+  generate → encode → upload together.
+- **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, plus `validate()`
+  which runs the quality layer and promotes the capture's quality tag.
+- **`quality/`** — `metrics.py` is **pure functions** (no I/O, no logging, no decisions:
+  clipping ratio, RMS dBFS, invalid samples, DC offset, completeness, SigMF metadata validity).
+  `checker.py` (`QualityChecker`/`QualityReport`) applies configurable `QualityThresholds` to
+  those metrics and produces a pass/fail verdict.
+
+`scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`), both using `rich` for
+output and documented exit codes (0 ok / 1 storage failure / 2 config-or-unexpected).
+
+### Conventions that span multiple files
+
+These are the load-bearing decisions; read the referenced ADR before changing them.
+
+- **Bucket key layout** (`orchestrator.py`): `{signal_type}/{YYYY-MM-DD}/{session_id}/capture.sigmf-data`
+  and `…/capture.sigmf-meta`. `session_id` is 8 hex chars. A capture is "complete" only when both
+  objects exist; `CaptureReader.list_captures` skips orphans. Quality reports are written as
+  `…/{session}/quality_report.json`.
+
+- **Metadata vs. tags split** (ADR-003, `docs/adr/003-…`): continuous/technical values go in
+  `x-amz-meta-*` headers (cheap to read via HEAD, no body transfer); categorical/enumerable values
+  go in **S3 tags** (`signal-type`, `recorder`, `hardware`, `quality`) which are indexable and drive
+  lifecycle. **Both are attached only to the `.sigmf-data` object** — the `.sigmf-meta` JSON carries
+  no headers/tags because its body *is* the description.
+
+- **Upload order matters** (`orchestrator.py`): `.sigmf-meta` is uploaded **before** `.sigmf-data`,
+  so a consumer racing between the two puts sees interpretable JSON rather than orphan bytes.
+
+- **`StorageClient.update_tags` is a full REPLACE, not a merge.** The S3 `PutObjectTagging` API
+  overwrites the entire tag set. To change one tag (e.g. quality promotion), you MUST read existing
+  tags, merge, then write — `CaptureReader.validate` does exactly this. Forgetting the merge wipes
+  `signal-type`/`hardware`/`recorder`.
+
+- **Quality lifecycle** (ADR-003 + ADR-004): tag starts at `quality=raw` (set by the producer).
+  `validate()` promotes it to `validated` or `rejected` based on the report verdict. `archived` is
+  manual. There is no automated retention/lifecycle policy (dropped from scope per ADR-004).
+
+- **boto3 endpoint switch** (ADR-001, `storage.py`): when `s3_endpoint` is empty, boto3 talks to
+  real AWS — which is also what **moto** intercepts in tests; when set, it talks to MinIO. MinIO
+  needs `signature_version="s3v4"` + path-style addressing (already configured). boto3 (not
+  minio-py) was chosen for portability and moto support.
+
+### Project direction (read ADR-004 first)
+
+ADR-004 reprioritized the project after a call with the project lead: **input data quality and a
+curated dataset are the priority**, not real-time delivery. So the **quality layer is the current
+focus**; the **streaming pipeline (multipart upload, HTTP Range Requests, ZeroMQ Pub/Sub) is
+deferred**, and real SDR capture (SoapySDR) is still future work. The README's "Architecture cible"
+describes the eventual end state, not what exists today — trust the ADRs and the code for current
+status.
+
+## Project context & history
+
+`docs/context/historique-discussions.md` (committed) distills the two desktop-app design
+discussions (21–29 May 2026) that predate this repo: the project goal, the 3 demos
+(GNSS/Iridium/Starlink), the people (Abdu = project lead, Malek = tutor, Wissem/Ahmad =
+receiver owners, Pierre/Lucien = NeSIVA predecessors), the hardware (BladeRF + RTL-SDR,
+remote MinIO at fast.etsmtl.ca), and the roadmap Théo wants (finish infra → visualization
+GUI → GNU Radio Record/Playback → test on real data). Read it for the *why* behind the
+code. Raw transcripts live under `docs/context/transcripts/` (gitignored).
+
+Note: Théo prefers **heavily commented, pedagogical code** — match the existing comment
+density in `src/`, it is intentional (a learning aid), not clutter.
+
+## Decision records
+
+`docs/adr/` holds the Architectural Decision Records. They are the authoritative record of *why*
+the code is shaped the way it is — consult them before reversing a design choice, and add a new ADR
+(don't silently edit an accepted one) when making a decision of comparable weight:
+
+- ADR-001 — boto3 over the MinIO SDK
+- ADR-002 — batch upload now, streaming later
+- ADR-003 — metadata vs. tagging convention (the key layout + lifecycle)
+- ADR-004 — prioritize data quality over streaming (reorders the roadmap)
+
+## Testing notes
+
+Tests use **moto** to mock S3 (no real MinIO needed). `tests/conftest.py` provides `test_settings`
+(isolated from the developer's `.env` by passing values as kwargs, with `s3_endpoint=""` so moto
+intercepts), `mock_s3` (a moto-backed client with the test bucket pre-created), and `storage_client`
+(a `StorageClient` wired to the mock). Inject these rather than hitting a live backend.

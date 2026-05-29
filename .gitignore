@@ -81,3 +81,6 @@ minio_data/
 
 # Notebooks Jupyter
 .ipynb_checkpoints/
+
+# Transcripts bruts des discussions Claude desktop (archive locale, ne pas committer)
+docs/context/transcripts/
