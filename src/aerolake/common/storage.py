@@ -129,6 +129,48 @@ class StorageClient:
             raise StorageError(f"get_object_tagging failed for {key!r}") from exc
         return {item["Key"]: item["Value"] for item in response.get("TagSet", [])}
 
+    def update_tags(self, key: str, tags: dict[str, str]) -> None:
+        """Replace ALL tags on an existing object with the given dict.
+
+        IMPORTANT — this is a REPLACE, not a merge. The S3 PutObjectTagging
+        API overwrites the entire tag set of the object. So if an object has
+        tags {a, b, c} and you call update_tags with {a, b}, then c is
+        DELETED. To preserve existing tags, read them first with
+        get_object_tags(), merge in your changes, then call this.
+
+        We deliberately keep this method "dumb" (full replace) because that
+        mirrors exactly what the underlying S3 API does. The merge logic,
+        when needed, lives in the caller where the intent is explicit.
+
+        Parameters
+        ----------
+        key
+            S3 object key whose tags should be replaced.
+        tags
+            The complete new tag set. Keys 1-128 chars, values 0-256 chars,
+            max 10 tags per object.
+        """
+        log = logger.bind(bucket=self.bucket, key=key, n_tags=len(tags))
+
+        # The S3 PutObjectTagging API expects a specific structure:
+        # a TagSet which is a list of {"Key": ..., "Value": ...} dicts.
+        # This differs from the upload-time "Tagging" parameter which uses
+        # a URL-encoded string. Same concept, different wire format —
+        # one of S3's little inconsistencies.
+        tag_set = [{"Key": k, "Value": v} for k, v in tags.items()]
+
+        try:
+            self._client.put_object_tagging(
+                Bucket=self.bucket,
+                Key=key,
+                Tagging={"TagSet": tag_set},
+            )
+        except ClientError as exc:
+            log.error("storage.update_tags.failed", error=str(exc))
+            raise StorageError(f"Failed to update tags on {key!r}") from exc
+
+        log.info("storage.update_tags.ok")
+
     # --- Upload and download ---------------------------------------------
 
     def upload_bytes(
