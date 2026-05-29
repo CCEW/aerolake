@@ -13,7 +13,8 @@ import pytest
 
 from aerolake.common.storage import StorageClient
 from aerolake.consumer.reader import CaptureReader
-
+from aerolake.producer.synthetic import generate_tone
+from aerolake.quality.checker import QualityChecker, QualityThresholds
 
 @pytest.fixture
 def reader(storage_client: StorageClient) -> CaptureReader:
@@ -178,3 +179,160 @@ def test_read_raises_on_unsupported_datatype(
 
     with pytest.raises(ValueError, match="Unsupported SigMF datatype"):
         reader.read("bad/capture.sigmf-data")
+
+def _upload_clean_capture(
+    storage_client: StorageClient,
+    data_key: str,
+    *,
+    duration_s: float = 0.001,
+    sample_rate: float = 2_000_000,
+    tone_amplitude: float = 0.1,
+    quality: str = "raw",
+) -> np.ndarray:
+    """Upload a clean tone capture (good quality) tagged quality=<quality>.
+
+    Unlike _upload_synthetic_capture (which generates pure Gaussian noise at
+    ~full-scale RMS and would fail quality checks), this helper uses
+    generate_tone at a realistic -20 dBFS level, so the capture passes the
+    default quality thresholds. Pass tone_amplitude=1.5 to force a saturated,
+    rejectable capture.
+    """
+    # Generate a clean tone via the real producer code (seed -> deterministic).
+    signal = generate_tone(
+        duration_s=duration_s,
+        sample_rate=sample_rate,
+        center_freq=1_575_420_000,
+        tone_amplitude=tone_amplitude,
+        snr_db=20.0,
+        seed=42,
+    )
+
+    # Minimal valid SigMF metadata, matching the data we just generated.
+    sigmf_meta = {
+        "global": {
+            "core:datatype": "cf32_le",
+            "core:sample_rate": float(sample_rate),
+            "core:version": "1.2.6",
+        },
+        "captures": [
+            {"core:sample_start": 0, "core:frequency": 1_575_420_000.0}
+        ],
+        "annotations": [],
+    }
+
+    # Upload the .sigmf-meta sidecar.
+    meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
+    storage_client.upload_bytes(
+        meta_key,
+        json.dumps(sigmf_meta).encode("utf-8"),
+        content_type="application/json",
+    )
+    # Upload the .sigmf-data with an initial quality tag (default "raw"),
+    # so we can verify the promotion to validated/rejected afterwards.
+    storage_client.upload_bytes(
+        data_key,
+        signal.samples.tobytes(),
+        content_type="application/octet-stream",
+        tags={"signal-type": "gnss_l1", "quality": quality},
+    )
+    return signal.samples
+
+
+# --- validate ------------------------------------------------------------
+
+def test_validate_clean_capture_passes_and_promotes(
+    reader: CaptureReader, storage_client: StorageClient
+) -> None:
+    """A clean capture should pass and have its quality tag promoted."""
+    _upload_clean_capture(storage_client, "gnss_l1/X/capture.sigmf-data")
+
+    report = reader.validate(
+        "gnss_l1/X/capture.sigmf-data", expected_duration_s=0.001
+    )
+
+    # Verdict is positive, no failures.
+    assert report.is_valid is True
+    assert report.failed_checks == []
+
+    # The quality tag was promoted raw -> validated...
+    tags = storage_client.get_object_tags("gnss_l1/X/capture.sigmf-data")
+    assert tags["quality"] == "validated"
+    # ...and the other tags were preserved (read -> merge -> write worked).
+    assert tags["signal-type"] == "gnss_l1"
+
+
+def test_validate_stores_quality_report(
+    reader: CaptureReader, storage_client: StorageClient
+) -> None:
+    """validate should write a quality_report.json next to the capture."""
+    _upload_clean_capture(storage_client, "gnss_l1/Y/capture.sigmf-data")
+
+    reader.validate("gnss_l1/Y/capture.sigmf-data", expected_duration_s=0.001)
+
+    # The report artifact must exist and be valid JSON with the verdict.
+    raw = storage_client.download_bytes("gnss_l1/Y/quality_report.json")
+    parsed = json.loads(raw)
+    assert parsed["is_valid"] is True
+    assert parsed["clipping_ratio"] == 0.0
+
+
+def test_validate_rejects_saturated_capture(
+    reader: CaptureReader, storage_client: StorageClient
+) -> None:
+    """A saturated capture should fail and be tagged quality=rejected."""
+    # tone_amplitude=1.5 -> every sample clips -> fails clipping + too loud.
+    _upload_clean_capture(
+        storage_client, "gnss_l1/Z/capture.sigmf-data", tone_amplitude=1.5
+    )
+
+    report = reader.validate(
+        "gnss_l1/Z/capture.sigmf-data", expected_duration_s=0.001
+    )
+
+    assert report.is_valid is False
+    tags = storage_client.get_object_tags("gnss_l1/Z/capture.sigmf-data")
+    assert tags["quality"] == "rejected"
+
+
+def test_validate_can_skip_report_storage(
+    reader: CaptureReader, storage_client: StorageClient
+) -> None:
+    """With store_report=False, no quality_report.json should be written."""
+    _upload_clean_capture(storage_client, "gnss_l1/W/capture.sigmf-data")
+
+    reader.validate(
+        "gnss_l1/W/capture.sigmf-data",
+        expected_duration_s=0.001,
+        store_report=False,
+    )
+
+    # The report must NOT exist.
+    assert not storage_client.object_exists("gnss_l1/W/quality_report.json")
+
+
+def test_validate_accepts_custom_checker(
+    reader: CaptureReader, storage_client: StorageClient
+) -> None:
+    """An injected permissive checker can accept an otherwise-bad capture.
+
+    This proves dependency injection works: the same saturated capture that
+    would normally be rejected passes when we relax the thresholds.
+    """
+    _upload_clean_capture(
+        storage_client, "gnss_l1/V/capture.sigmf-data", tone_amplitude=1.5
+    )
+
+    # Ultra-permissive thresholds: tolerate full clipping and loud signals.
+    permissive = QualityChecker(
+        QualityThresholds(max_clipping_ratio=1.0, max_rms_dbfs=50.0)
+    )
+
+    report = reader.validate(
+        "gnss_l1/V/capture.sigmf-data",
+        expected_duration_s=0.001,
+        checker=permissive,
+    )
+
+    assert report.is_valid is True
+    tags = storage_client.get_object_tags("gnss_l1/V/capture.sigmf-data")
+    assert tags["quality"] == "validated"

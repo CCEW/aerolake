@@ -133,3 +133,66 @@ def test_upload_bytes_without_tags_returns_empty_dict(storage_client) -> None:
     """An object uploaded without tags returns an empty tag dict."""
     storage_client.upload_bytes("no_tags.txt", b"hello")
     assert storage_client.get_object_tags("no_tags.txt") == {}
+# --- update_tags ----------------------------------------------------------
+
+def test_update_tags_replaces_entire_tag_set(
+    storage_client: StorageClient,
+) -> None:
+    """update_tags must REPLACE all tags, not merge.
+
+    This documents the (deliberately) destructive behavior: calling
+    update_tags with a partial set drops any tag not included. This mirrors
+    the underlying S3 PutObjectTagging API.
+    """
+    # Upload an object with two tags.
+    storage_client.upload_bytes(
+        "obj/key.bin",
+        b"payload",
+        tags={"signal-type": "gnss_l1", "quality": "raw"},
+    )
+    # Sanity check on the initial state.
+    assert storage_client.get_object_tags("obj/key.bin") == {
+        "signal-type": "gnss_l1",
+        "quality": "raw",
+    }
+
+    # Replace with a set that OMITS signal-type.
+    storage_client.update_tags("obj/key.bin", {"quality": "validated"})
+
+    # signal-type must be gone — this is a full replace, not a merge.
+    after = storage_client.get_object_tags("obj/key.bin")
+    assert after == {"quality": "validated"}
+    assert "signal-type" not in after
+
+
+def test_update_tags_merge_pattern_preserves_other_tags(
+    storage_client: StorageClient,
+) -> None:
+    """The read -> merge -> write pattern preserves untouched tags.
+
+    This is how callers (like CaptureReader.validate) safely change ONE tag
+    without wiping the others: read current tags, merge the change, write.
+    """
+    storage_client.upload_bytes(
+        "obj/key.bin",
+        b"payload",
+        tags={
+            "signal-type": "gnss_l1",
+            "quality": "raw",
+            "hardware": "synthetic",
+        },
+    )
+
+    # read -> merge -> write
+    current = storage_client.get_object_tags("obj/key.bin")
+    merged = dict(current)            # defensive copy
+    merged["quality"] = "validated"   # change only this one
+    storage_client.update_tags("obj/key.bin", merged)
+
+    # All three tags survive, only quality changed.
+    after = storage_client.get_object_tags("obj/key.bin")
+    assert after == {
+        "signal-type": "gnss_l1",
+        "quality": "validated",
+        "hardware": "synthetic",
+    }
