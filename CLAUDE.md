@@ -24,6 +24,8 @@ cd docker && docker compose up -d   # MinIO API :9000, console :9001, auto-creat
 # Entry points (defined in pyproject [project.scripts])
 uv run aerolake-healthcheck          # verify .env + MinIO reachable + bucket accessible
 uv run aerolake-producer --preset gnss-l1 --duration 1.0   # generate+upload a synthetic capture
+uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a prefix (read-only preview)
+uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
 
 # Quality / linting / tests
 uv run ruff check .              # lint  (ruff config in pyproject; line-length 100, E501 ignored)
@@ -35,8 +37,10 @@ uv run pytest tests/quality/test_metrics.py::test_name # one test
 uv run pytest -k clipping        # tests matching an expression
 ```
 
-There is no real CLI for the consumer/quality flow yet — `CaptureReader.validate()` is exercised
-through tests and is the basis for a planned batch-validation CLI.
+`aerolake-validate` orchestrates `CaptureReader.validate()` over a whole prefix to curate the
+bucket (promote `quality` tags, write `quality_report.json` artifacts). `--dry-run` previews
+verdicts without mutating anything. There is still no CLI for plain listing/inspection (see
+the planned `aerolake-list` catalog CLI).
 
 ## Configuration
 

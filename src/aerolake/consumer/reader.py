@@ -176,6 +176,7 @@ class CaptureReader:
         expected_duration_s: float | None = None,
         checker: QualityChecker | None = None,
         store_report: bool = True,
+        promote_tag: bool = True,
     ) -> QualityReport:
         """Read a capture, assess its quality, and promote its quality tag.
 
@@ -215,6 +216,12 @@ class CaptureReader:
             If True (default), write a quality_report.json artifact next to
             the capture in MinIO. Set to False to skip the upload (e.g. for
             a dry-run validation where you only want the verdict).
+        promote_tag
+            If True (default), write the verdict back to the capture's MinIO
+            'quality' tag (validated/rejected). Set to False to leave the tag
+            untouched — combined with store_report=False this makes validate()
+            a read-only dry run that computes and returns the verdict without
+            mutating anything in the bucket.
 
         Returns
         -------
@@ -297,25 +304,30 @@ class CaptureReader:
             )
             log.info("consumer.validate.report_stored", report_key=report_key)
 
-        # --- Step 5 — Promote the quality tag ------------------------------
-        # We follow the read -> merge -> write pattern (as validated in our
-        # smoke test). update_tags REPLACES the whole tag set, so we must
-        # read the existing tags first and merge our change in, otherwise
-        # we'd wipe signal-type, hardware, recorder, etc.
-        current_tags = self._storage.get_object_tags(data_key)
-        merged_tags = dict(current_tags)  # defensive copy before mutating
+        # The verdict drives the new quality value, regardless of whether we
+        # actually write it back below — we compute it here so it can be both
+        # logged and (optionally) persisted.
+        new_quality = "validated" if report.is_valid else "rejected"
 
-        # The verdict drives the new quality value.
-        merged_tags["quality"] = "validated" if report.is_valid else "rejected"
-
-        # Write the merged tag set back to the .sigmf-data object.
-        self._storage.update_tags(data_key, merged_tags)
+        # --- Step 5 — Promote the quality tag (unless this is a dry run) ----
+        if promote_tag:
+            # We follow the read -> merge -> write pattern (as validated in our
+            # smoke test). update_tags REPLACES the whole tag set, so we must
+            # read the existing tags first and merge our change in, otherwise
+            # we'd wipe signal-type, hardware, recorder, etc.
+            current_tags = self._storage.get_object_tags(data_key)
+            merged_tags = dict(current_tags)  # defensive copy before mutating
+            merged_tags["quality"] = new_quality
+            # Write the merged tag set back to the .sigmf-data object.
+            self._storage.update_tags(data_key, merged_tags)
 
         # --- Step 6 — Log a summary and return -----------------------------
         log.info(
             "consumer.validate.done",
             is_valid=report.is_valid,
-            new_quality=merged_tags["quality"],
+            # Make it explicit in the logs when the tag was left untouched, so
+            # a dry run can't be mistaken for a real promotion.
+            new_quality=new_quality if promote_tag else "(dry-run, tag unchanged)",
             n_failed=len(report.failed_checks),
         )
 

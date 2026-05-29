@@ -22,6 +22,7 @@ dependencies = [
 [project.scripts]
 aerolake-healthcheck = "aerolake.scripts.healthcheck:main"
 aerolake-producer = "aerolake.scripts.producer:main"
+aerolake-validate = "aerolake.scripts.validate:main"
 
 [dependency-groups]
 dev = [
