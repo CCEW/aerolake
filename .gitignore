@@ -84,3 +84,6 @@ minio_data/
 
 # Transcripts bruts des discussions Claude desktop (archive locale, ne pas committer)
 docs/context/transcripts/
+
+# Réglages locaux Claude Code (spécifiques à la machine, ne pas partager)
+.claude/settings.local.json
