@@ -31,6 +31,7 @@ from rich.console import Console
 from rich.table import Table
 
 from aerolake.common.config import Settings, get_settings
+from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageClient, StorageError
 
 
@@ -87,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Output a JSON report instead of human-readable text.",
     )
     args = parser.parse_args(argv)
+    # Route logs to stderr so stdout stays clean (matters for --json).
+    configure_logging()
 
     console = Console(stderr=False)
 

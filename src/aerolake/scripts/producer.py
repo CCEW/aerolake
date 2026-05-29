@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from rich.console import Console
 from rich.table import Table
 
+from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageError
 from aerolake.producer.orchestrator import capture_and_upload
 
@@ -154,6 +155,8 @@ def _resolve_capture_params(args: argparse.Namespace) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    # Route logs to stderr so stdout stays clean for the result summary.
+    configure_logging()
     console = Console()
 
     try:
