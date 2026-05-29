@@ -142,8 +142,8 @@ def capture_and_upload(
     }
 
     # S3 tags: categorical attributes for search and lifecycle policies.
-    # Quality starts as "raw"; a future consumer-side validation step will
-    # promote it to "validated" (see ADR-005 when written).
+    # Quality starts as "raw"; the consumer-side validation step promotes it to
+    # "validated" or "rejected" (see ADR-005 for the promotion lifecycle).
     data_tags = {
         "signal-type": signal_type,
         "recorder": "aerolake-producer-synthetic",

@@ -134,6 +134,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-002 — batch upload now, streaming later
 - ADR-003 — metadata vs. tagging convention (the key layout + lifecycle)
 - ADR-004 — prioritize data quality over streaming (reorders the roadmap)
+- ADR-005 — consumer-side quality tag promotion lifecycle (raw → validated/rejected)
 
 ## Testing notes
 
