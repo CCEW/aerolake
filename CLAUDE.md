@@ -26,6 +26,7 @@ uv run aerolake-healthcheck          # verify .env + MinIO reachable + bucket ac
 uv run aerolake-producer --preset gnss-l1 --duration 1.0   # generate+upload a synthetic capture
 uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a prefix (read-only preview)
 uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
+uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
 
 # Quality / linting / tests
 uv run ruff check .              # lint  (ruff config in pyproject; line-length 100, E501 ignored)
@@ -39,8 +40,9 @@ uv run pytest -k clipping        # tests matching an expression
 
 `aerolake-validate` orchestrates `CaptureReader.validate()` over a whole prefix to curate the
 bucket (promote `quality` tags, write `quality_report.json` artifacts). `--dry-run` previews
-verdicts without mutating anything. There is still no CLI for plain listing/inspection (see
-the planned `aerolake-list` catalog CLI).
+verdicts without mutating anything. `aerolake-list` is the read-only catalog: it lists captures
+and filters them by tag (`--signal-type`, `--quality`, `--hardware`, or generic `--tag k=v`)
+using only HEAD-class requests (no sample bytes downloaded), per the ADR-003 discovery pattern.
 
 ## Configuration
 

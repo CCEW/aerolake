@@ -11,7 +11,23 @@ import pytest
 from moto import mock_aws
 
 from aerolake.common.config import Settings
+from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageClient
+
+# --- Logging --------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _route_logs_to_stderr() -> None:
+    """Send structlog output to stderr before every test.
+
+    structlog's default (unconfigured) renderer writes to stdout. A test that
+    logs — e.g. via StorageClient while seeding captures — before any CLI
+    main() has called configure_logging() would therefore pollute stdout,
+    breaking tests that parse a CLI's --json output. Configuring here, autouse,
+    makes stdout clean regardless of test order.
+    """
+    configure_logging()
+
 
 # --- Configuration --------------------------------------------------------
 
