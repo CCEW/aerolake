@@ -21,6 +21,8 @@ import structlog
 
 from aerolake.common.storage import StorageClient, StorageError
 
+from aerolake.quality.checker import QualityChecker, QualityReport
+
 logger = structlog.get_logger(__name__)
 
 
@@ -165,3 +167,156 @@ class CaptureReader:
             data_bytes=len(data_bytes),
         )
         return CaptureContent(samples=samples, sigmf_meta=sigmf_meta, info=info)
+
+# --- Quality validation -----------------------------------------------
+
+    def validate(
+        self,
+        data_key: str,
+        expected_duration_s: float | None = None,
+        checker: QualityChecker | None = None,
+        store_report: bool = True,
+    ) -> QualityReport:
+        """Read a capture, assess its quality, and promote its quality tag.
+
+        This is the orchestration method that turns a raw capture into a
+        curated-dataset decision. The full flow is:
+
+          1. Download + decode the capture (via self.read)
+          2. Run every quality metric on it (via QualityChecker)
+          3. Optionally store a quality_report.json next to the capture
+          4. Promote the MinIO 'quality' tag based on the verdict:
+                - report.is_valid is True  -> quality = "validated"
+                - report.is_valid is False -> quality = "rejected"
+          5. Return the full QualityReport so the caller knows what happened
+
+        The 'quality' tag promotion extends the lifecycle convention from
+        ADR-003 (raw -> validated -> archived) with a 'rejected' state, so
+        that bad captures are explicitly marked rather than silently left
+        as 'raw'. This is what lets us later filter the bucket down to a
+        clean, curated subset.
+
+        Parameters
+        ----------
+        data_key
+            Key of the .sigmf-data object to validate.
+        expected_duration_s
+            The capture duration the producer INTENDED, in seconds. Used to
+            compute sample completeness (did we drop samples?). If None, we
+            fall back to deriving it from the data itself, which makes the
+            completeness check trivially pass — so pass the real intended
+            duration whenever you have it for a meaningful check.
+        checker
+            A pre-configured QualityChecker (with custom thresholds, say).
+            If None, a default QualityChecker is created. This is dependency
+            injection: it lets tests and callers control the thresholds
+            without this method having to know about them.
+        store_report
+            If True (default), write a quality_report.json artifact next to
+            the capture in MinIO. Set to False to skip the upload (e.g. for
+            a dry-run validation where you only want the verdict).
+
+        Returns
+        -------
+        QualityReport
+            The full report, including raw metrics and the pass/fail verdict.
+
+        Raises
+        ------
+        StorageError
+            If the capture can't be read or the tag update fails.
+        ValueError
+            If the SigMF datatype is unsupported (propagated from read()).
+        """
+        # Bind the data_key to every log line in this method, so a reader
+        # of the logs can follow the whole validation for one capture.
+        log = logger.bind(data_key=data_key)
+
+        # --- Step 1 — Read and decode the capture --------------------------
+        # We reuse our own read() method. This downloads both the .sigmf-data
+        # and the .sigmf-meta, and returns a CaptureContent with the decoded
+        # samples, the parsed SigMF metadata, and the CaptureInfo.
+        content = self.read(data_key)
+
+        # --- Step 2 — Determine the expected duration ----------------------
+        # The completeness metric needs to know how many samples we EXPECTED.
+        # The honest source for that is the producer's intent, passed in as
+        # expected_duration_s. If the caller didn't provide it, we derive a
+        # duration from the data itself (sample_count / sample_rate). Note
+        # this makes the completeness check always report ~1.0, because we're
+        # comparing the data against itself — it can't detect dropouts in
+        # that mode. That's why passing the real intended duration matters.
+        if expected_duration_s is None:
+            # Pull the sample rate from the SigMF global section.
+            sample_rate = content.sigmf_meta.get("global", {}).get(
+                "core:sample_rate", 0
+            )
+            if sample_rate > 0:
+                # Derive duration from the actual sample count. This is the
+                # "trust the data" fallback.
+                expected_duration_s = len(content.samples) / sample_rate
+            else:
+                # No usable sample rate — set 0.0 so the completeness check
+                # will fail loudly, and the metadata check will also flag the
+                # missing core:sample_rate field.
+                expected_duration_s = 0.0
+
+        # --- Step 3 — Run the quality assessment ---------------------------
+        # Use the injected checker, or build a default one with standard
+        # thresholds. The "or" trick works because QualityChecker() with no
+        # args returns a ready-to-use instance.
+        checker = checker or QualityChecker()
+        report = checker.check(
+            samples=content.samples,
+            sigmf_meta=content.sigmf_meta,
+            expected_duration_s=expected_duration_s,
+        )
+
+        # --- Step 4 — Optionally store the report as a JSON artifact -------
+        if store_report:
+            # Build the report's key: same "folder" as the capture, but a
+            # fixed filename. rsplit("/", 1) splits off the last path
+            # segment (the "capture.sigmf-data" filename), giving us the
+            # session prefix, to which we append our report filename.
+            session_prefix = data_key.rsplit("/", 1)[0] + "/"
+            report_key = session_prefix + "quality_report.json"
+
+            # Serialize the report dict to pretty-printed JSON bytes.
+            # NOTE: if a metric is -inf or NaN (e.g. RMS of a silent or
+            # corrupted signal), json.dumps writes it as "Infinity"/"NaN",
+            # which is valid for Python's json but not strict JSON. We accept
+            # that for now; a future improvement could sanitize those values.
+            report_bytes = json.dumps(report.to_dict(), indent=2).encode("utf-8")
+
+            # Upload as a standalone object. content_type tells any future
+            # reader (browser, MinIO console) that this is JSON.
+            self._storage.upload_bytes(
+                report_key,
+                report_bytes,
+                content_type="application/json",
+            )
+            log.info("consumer.validate.report_stored", report_key=report_key)
+
+        # --- Step 5 — Promote the quality tag ------------------------------
+        # We follow the read -> merge -> write pattern (as validated in our
+        # smoke test). update_tags REPLACES the whole tag set, so we must
+        # read the existing tags first and merge our change in, otherwise
+        # we'd wipe signal-type, hardware, recorder, etc.
+        current_tags = self._storage.get_object_tags(data_key)
+        merged_tags = dict(current_tags)  # defensive copy before mutating
+
+        # The verdict drives the new quality value.
+        merged_tags["quality"] = "validated" if report.is_valid else "rejected"
+
+        # Write the merged tag set back to the .sigmf-data object.
+        self._storage.update_tags(data_key, merged_tags)
+
+        # --- Step 6 — Log a summary and return -----------------------------
+        log.info(
+            "consumer.validate.done",
+            is_valid=report.is_valid,
+            new_quality=merged_tags["quality"],
+            n_failed=len(report.failed_checks),
+        )
+
+        return report
