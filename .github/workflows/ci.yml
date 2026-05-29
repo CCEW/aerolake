@@ -1,0 +1,43 @@
+name: CI
+
+# Run on every push to main and on every pull request targeting it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel an in-progress run when new commits are pushed to the same ref,
+# so we don't burn minutes validating a commit that's already superseded.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, type-check & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          # Cache the uv download cache keyed on the lockfile for fast installs.
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        # --frozen: install exactly what uv.lock pins; fail if it's out of date.
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type-check (mypy)
+        run: uv run mypy src
+
+      - name: Tests (pytest)
+        # Tests are fully self-contained: moto mocks S3, so no MinIO is needed.
+        run: uv run pytest
