@@ -25,6 +25,7 @@ cd docker && docker compose up -d   # MinIO API :9000, console :9001, auto-creat
 # Entry points (defined in pyproject [project.scripts])
 uv run aerolake-healthcheck          # verify .env + MinIO reachable + bucket accessible
 uv run aerolake-producer --preset gnss-l1 --duration 1.0   # generate+upload a synthetic capture
+uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6  # ingest a REAL IQ file
 uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a prefix (read-only preview)
 uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
 uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
@@ -69,7 +70,9 @@ a "curated" capture. Four packages under `src/aerolake/`:
   (streaming upload, ADR-010) and `download_range` (partial reads, ADR-009)).
 - **`producer/`** — `synthetic.py` generates IQ samples (`generate_tone`), `sigmf_writer.py`
   encodes them to SigMF bytes (`encode`), `orchestrator.py` (`capture_and_upload`) ties
-  generate → encode → upload together.
+  generate → encode → upload together. `ingest.py` (`ingest_file`, `aerolake-ingest`) is the
+  **real-data** entry point: take an existing IQ file (cf32/cu8/cs16 → normalised cf32), write
+  the `.sigmf-meta`, and stream the data into MinIO via `upload_multipart` (ADR-010).
 - **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, `read_segment()`
   for **partial/seeked reads** (HTTP Range — fetch only a `start_s`/`duration_s` window, ADR-009),
   plus `validate()` which runs the quality layer and promotes the capture's quality tag. `player.py`

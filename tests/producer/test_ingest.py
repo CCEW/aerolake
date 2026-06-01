@@ -1,0 +1,126 @@
+"""Tests for ingesting existing IQ files (producer.ingest + the CLI).
+
+We write a small raw file to a tmp path, ingest it into moto-backed storage,
+then read it back through the consumer to prove the round trip and the cf32
+conversion.
+"""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
+
+from aerolake.common.storage import StorageClient
+from aerolake.consumer.reader import CaptureReader
+from aerolake.producer.ingest import ingest_file
+from aerolake.scripts.ingest import main
+
+
+def test_ingest_cf32_file_roundtrips(storage_client: StorageClient, tmp_path) -> None:
+    # A cf32 file (what GNU Radio's File Sink writes).
+    samples = (np.arange(1000) + 1j * np.arange(1000)).astype(np.complex64)
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(samples.tobytes())
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="gnss_l1",
+        sample_rate=2_000_000,
+        center_freq=1_575_420_000,
+        hardware="bladerf",
+        storage_client=storage_client,
+    )
+
+    assert result.sample_count == 1000
+    # Read it back through the normal consumer path.
+    reader = CaptureReader(storage_client)
+    content = reader.read(result.data_key)
+    np.testing.assert_array_equal(content.samples, samples)
+    # Metadata + tags landed correctly.
+    info = reader.inspect(result.data_key)
+    assert info.tags["signal-type"] == "gnss_l1"
+    assert info.tags["hardware"] == "bladerf"
+    assert info.tags["quality"] == "raw"
+    assert info.metadata["sample-rate"] == "2000000"
+    assert content.sigmf_meta["global"]["core:datatype"] == "cf32_le"
+
+
+def test_ingest_cu8_is_converted_to_normalised_cf32(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    # RTL-SDR style: unsigned 8-bit interleaved I,Q. 255 -> ~+1, 0 -> ~-1.
+    raw = np.array([255, 0, 127, 128], dtype=np.uint8)  # one I=+1,Q=-1 ; one ~0
+    path = tmp_path / "dump.iq"
+    path.write_bytes(raw.tobytes())
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="iridium",
+        sample_rate=2_000_000,
+        center_freq=1_626_000_000,
+        datatype="cu8",
+        hardware="rtlsdr",
+        storage_client=storage_client,
+    )
+
+    assert result.sample_count == 2  # 4 uint8 = 2 complex samples
+    content = CaptureReader(storage_client).read(result.data_key)
+    assert content.samples.dtype == np.complex64
+    # First sample: I=(255-127.5)/127.5=+1.0, Q=(0-127.5)/127.5=-1.0
+    assert content.samples[0].real == 1.0
+    assert content.samples[0].imag == -1.0
+    # Second sample is near zero.
+    assert abs(content.samples[1]) < 0.02
+
+
+def test_ingest_meta_uploaded_before_data_is_complete(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    """Both objects must exist and form a complete capture."""
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.zeros(16, dtype=np.complex64).tobytes())
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="gnss_l1",
+        sample_rate=2_000_000,
+        center_freq=1_575_420_000,
+        storage_client=storage_client,
+    )
+
+    assert storage_client.object_exists(result.meta_key)
+    assert storage_client.object_exists(result.data_key)
+    # The meta is valid JSON with the expected fields.
+    meta = json.loads(storage_client.download_bytes(result.meta_key))
+    assert meta["captures"][0]["core:frequency"] == 1_575_420_000.0
+
+
+# --- CLI -----------------------------------------------------------------
+
+def test_ingest_cli_happy_path(storage_client: StorageClient, tmp_path, capsys) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.zeros(100, dtype=np.complex64).tobytes())
+
+    code = main(
+        [
+            str(path),
+            "--signal-type", "gnss_l1",
+            "--sample-rate", "2e6",
+            "--center-freq", "1575.42e6",
+            "--hardware", "bladerf",
+        ],
+        storage_client=storage_client,
+    )
+
+    assert code == 0
+    assert "ingested" in capsys.readouterr().out.lower()
+
+
+def test_ingest_cli_missing_file_returns_two(storage_client: StorageClient) -> None:
+    code = main(
+        ["/nope/does-not-exist.iq", "--signal-type", "x",
+         "--sample-rate", "2e6", "--center-freq", "1e9"],
+        storage_client=storage_client,
+    )
+    assert code == 2
