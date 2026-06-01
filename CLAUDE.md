@@ -65,7 +65,8 @@ The pipeline is **Producer → MinIO → Consumer**, with a **Quality** layer th
 a "curated" capture. Four packages under `src/aerolake/`:
 
 - **`common/`** — shared infra. `config.py` (Settings). `storage.py` (`StorageClient`, the *single*
-  chokepoint for all S3 access; every read/write goes through it).
+  chokepoint for all S3 access; every read/write goes through it — incl. `upload_multipart`
+  (streaming upload, ADR-010) and `download_range` (partial reads, ADR-009)).
 - **`producer/`** — `synthetic.py` generates IQ samples (`generate_tone`), `sigmf_writer.py`
   encodes them to SigMF bytes (`encode`), `orchestrator.py` (`capture_and_upload`) ties
   generate → encode → upload together.
@@ -170,6 +171,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-007 — playback strategy (software cadence replay now; GNU Radio + SDR re-emission later)
 - ADR-008 — ZeroMQ Pub/Sub streaming of capture frames (reactivates ADR-002's streaming half)
 - ADR-009 — partial/seeked reads via HTTP Range Requests (Python `read_segment` + GNU Radio offset/length)
+- ADR-010 — streaming multipart upload to bypass RAM (`StorageClient.upload_multipart`)
 
 ## Testing notes
 

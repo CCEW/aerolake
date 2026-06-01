@@ -8,7 +8,8 @@ custom endpoint (typically a local MinIO instance).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import contextlib
+from collections.abc import Iterable, Iterator
 
 import boto3
 import structlog
@@ -230,6 +231,108 @@ class StorageClient:
             has_metadata=bool(metadata),
             has_tags=bool(tags),
         )
+
+    def upload_multipart(
+        self,
+        key: str,
+        chunks: Iterable[bytes],
+        content_type: str = "application/octet-stream",
+        *,
+        metadata: dict[str, str] | None = None,
+        tags: dict[str, str] | None = None,
+        part_size: int = 8 * 1024 * 1024,
+    ) -> int:
+        """Upload an object from a STREAM of byte chunks, via S3 multipart upload.
+
+        Unlike :meth:`upload_bytes` (which needs the whole object in memory at
+        once), this consumes an *iterator* of byte chunks and ships them part by
+        part — so a multi-GB capture can be uploaded **as it is produced/read,
+        without ever holding it all in RAM**. This is the mandate's "multipart
+        upload to bypass local RAM constraints" (the upload half of ADR-002,
+        complementing the Range-read half in ADR-009).
+
+        Incoming chunks may be any size: we **coalesce** them into parts of
+        ``part_size`` bytes. S3 requires every part *except the last* to be at
+        least 5 MiB, so keep ``part_size >= 5 MiB`` (the 8 MiB default is safe).
+
+        Metadata and tags are attached at creation time (same convention as
+        upload_bytes). Returns the total bytes uploaded. On any failure the
+        upload is **aborted**, so no dangling partial object is left behind.
+        """
+        log = logger.bind(bucket=self.bucket, key=key, part_size=part_size)
+
+        # CreateMultipartUpload takes the same Metadata/Tagging as put_object.
+        create_kwargs: dict = {
+            "Bucket": self.bucket,
+            "Key": key,
+            "ContentType": content_type,
+        }
+        if metadata:
+            create_kwargs["Metadata"] = {k: str(v) for k, v in metadata.items()}
+        if tags:
+            create_kwargs["Tagging"] = "&".join(f"{k}={v}" for k, v in tags.items())
+
+        try:
+            upload_id = self._client.create_multipart_upload(**create_kwargs)[
+                "UploadId"
+            ]
+        except ClientError as exc:
+            log.error("storage.multipart.create_failed", error=str(exc))
+            raise StorageError(
+                f"Failed to start multipart upload of {key!r}"
+            ) from exc
+
+        parts: list[dict] = []
+        buffer = bytearray()
+        part_number = 1
+        total = 0
+
+        def _flush(body: bytes) -> None:
+            """Upload one part and remember its (PartNumber, ETag)."""
+            nonlocal part_number
+            resp = self._client.upload_part(
+                Bucket=self.bucket,
+                Key=key,
+                PartNumber=part_number,
+                UploadId=upload_id,
+                Body=body,
+            )
+            parts.append({"PartNumber": part_number, "ETag": resp["ETag"]})
+            part_number += 1
+
+        try:
+            for chunk in chunks:
+                buffer.extend(chunk)
+                total += len(chunk)
+                # Emit full-size parts as soon as enough is buffered.
+                while len(buffer) >= part_size:
+                    _flush(bytes(buffer[:part_size]))
+                    del buffer[:part_size]
+            # Final part: the remainder (may be < 5 MiB — allowed for the last
+            # part). Always upload at least one part so 'complete' is valid.
+            if buffer or not parts:
+                _flush(bytes(buffer))
+            self._client.complete_multipart_upload(
+                Bucket=self.bucket,
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+        except Exception as exc:
+            # Abort so MinIO/S3 doesn't keep the orphaned parts around.
+            with contextlib.suppress(ClientError):
+                self._client.abort_multipart_upload(
+                    Bucket=self.bucket, Key=key, UploadId=upload_id
+                )
+            log.error("storage.multipart.failed", error=str(exc))
+            if isinstance(exc, ClientError):
+                raise StorageError(
+                    f"Multipart upload of {key!r} failed"
+                ) from exc
+            raise  # a non-storage error from the chunk iterator: propagate as-is
+
+        log.info("storage.multipart.ok", parts=len(parts), size=total)
+        return total
 
     def download_bytes(self, key: str) -> bytes:
         """Download an object and return its full content as bytes."""
