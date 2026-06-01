@@ -47,6 +47,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--frame-size", type=int, default=4096, help="Samples per frame (default 4096)."
     )
     parser.add_argument(
+        "--start",
+        type=float,
+        default=0.0,
+        help="Start offset in seconds — partial read, e.g. --start 200 (default 0).",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="Window length in seconds (default: play to the end).",
+    )
+    parser.add_argument(
         "--no-realtime",
         action="store_true",
         help="Emit frames back-to-back without pacing (don't wait in real time).",
@@ -98,7 +110,13 @@ def main(argv: list[str] | None = None, *, player: CapturePlayer | None = None) 
     )
 
     try:
-        stats = player.play(key, frame_size=args.frame_size, realtime=realtime)
+        stats = player.play(
+            key,
+            frame_size=args.frame_size,
+            realtime=realtime,
+            start_s=args.start,
+            duration_s=args.duration,
+        )
     except StorageError as exc:
         console.print(f"[bold red]✗ Storage error:[/] {exc}")
         return 1

@@ -28,7 +28,7 @@ uv run aerolake-producer --preset gnss-l1 --duration 1.0   # generate+upload a s
 uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a prefix (read-only preview)
 uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
 uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
-uv run aerolake-play --prefix gnss_l1/        # replay a capture's samples at recorded cadence
+uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # partial read: t=200s, 10s (HTTP Range)
 uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over ZeroMQ Pub/Sub
 
 # Visualization GUI (Streamlit + Plotly; optional `gui` dependency group)
@@ -69,8 +69,9 @@ a "curated" capture. Four packages under `src/aerolake/`:
 - **`producer/`** — `synthetic.py` generates IQ samples (`generate_tone`), `sigmf_writer.py`
   encodes them to SigMF bytes (`encode`), `orchestrator.py` (`capture_and_upload`) ties
   generate → encode → upload together.
-- **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, plus `validate()`
-  which runs the quality layer and promotes the capture's quality tag. `player.py`
+- **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, `read_segment()`
+  for **partial/seeked reads** (HTTP Range — fetch only a `start_s`/`duration_s` window, ADR-009),
+  plus `validate()` which runs the quality layer and promotes the capture's quality tag. `player.py`
   (`CapturePlayer`, ADR-007) replays a capture's samples in frames paced at the recorded sample
   rate (injectable clock for tests) — the software half of "playback". `stream.py`
   (`FramePublisher`/`FrameSubscriber`, ADR-008) publishes those frames over a ZeroMQ PUB/SUB bus
@@ -168,6 +169,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-006 — visualization GUI: Streamlit + Plotly web app
 - ADR-007 — playback strategy (software cadence replay now; GNU Radio + SDR re-emission later)
 - ADR-008 — ZeroMQ Pub/Sub streaming of capture frames (reactivates ADR-002's streaming half)
+- ADR-009 — partial/seeked reads via HTTP Range Requests (Python `read_segment` + GNU Radio offset/length)
 
 ## Testing notes
 

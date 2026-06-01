@@ -167,6 +167,95 @@ class CaptureReader:
         )
         return CaptureContent(samples=samples, sigmf_meta=sigmf_meta, info=info)
 
+    # --- Partial / seeked read --------------------------------------------
+
+    def read_segment(
+        self,
+        data_key: str,
+        start_s: float = 0.0,
+        duration_s: float | None = None,
+    ) -> CaptureContent:
+        """Read only a time window of a capture, via an HTTP Range request.
+
+        This is the **partial-read** feature: to "start at t = 200 s" of a
+        one-hour recording, we compute the byte offset and fetch *only* that
+        slice from MinIO — the rest of the (potentially multi-GB) capture is
+        never downloaded. The maths:
+
+            bytes_per_sample = 8           (cf32: 4-byte I + 4-byte Q)
+            start_byte = floor(start_s * sample_rate) * bytes_per_sample
+            n_samples  = floor(duration_s * sample_rate)   (or to the end)
+
+        Parameters
+        ----------
+        data_key
+            Key of the ``.sigmf-data`` object.
+        start_s
+            Offset from the beginning, in seconds (default 0.0).
+        duration_s
+            Window length in seconds. None (default) reads to the end.
+
+        Returns
+        -------
+        CaptureContent
+            Same shape as :meth:`read`, but ``samples`` holds only the window.
+            Out-of-range requests are clamped (an empty array if start_s is past
+            the end).
+        """
+        log = logger.bind(data_key=data_key, start_s=start_s, duration_s=duration_s)
+        meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
+
+        # We still need the metadata (datatype + sample rate) to interpret bytes
+        # and to convert seconds -> samples -> bytes. The .sigmf-meta is tiny.
+        info = self.inspect(data_key)
+        sigmf_meta = json.loads(
+            self._storage.download_bytes(meta_key).decode("utf-8")
+        )
+
+        datatype = sigmf_meta.get("global", {}).get("core:datatype")
+        if datatype not in _SIGMF_DTYPE_TO_NUMPY:
+            raise ValueError(
+                f"Unsupported SigMF datatype: {datatype!r}. "
+                f"Supported: {sorted(_SIGMF_DTYPE_TO_NUMPY)}"
+            )
+        np_dtype = _SIGMF_DTYPE_TO_NUMPY[datatype]
+        bytes_per_sample = np_dtype.itemsize  # 8 for complex64
+
+        sample_rate = float(sigmf_meta.get("global", {}).get("core:sample_rate", 0.0))
+        if sample_rate <= 0:
+            raise ValueError(
+                f"Cannot seek without a valid core:sample_rate in {data_key!r}"
+            )
+
+        # How many samples exist in total (size on disk / bytes per sample)?
+        total_samples = self._storage.object_size(data_key) // bytes_per_sample
+
+        # Convert the time window to a sample window, clamped to what exists.
+        start_sample = min(max(0, int(start_s * sample_rate)), total_samples)
+        if duration_s is None:
+            n_samples = total_samples - start_sample
+        else:
+            n_samples = min(
+                max(0, int(duration_s * sample_rate)), total_samples - start_sample
+            )
+
+        if n_samples <= 0:
+            # Window is empty (e.g. start past the end) — return no samples.
+            samples = np.empty(0, dtype=np_dtype)
+        else:
+            start_byte = start_sample * bytes_per_sample
+            end_byte = start_byte + n_samples * bytes_per_sample - 1  # inclusive
+            data_bytes = self._storage.download_range(data_key, start_byte, end_byte)
+            samples = np.frombuffer(data_bytes, dtype=np_dtype)
+
+        log.info(
+            "consumer.read_segment.ok",
+            start_sample=start_sample,
+            n_samples=len(samples),
+            total_samples=total_samples,
+        )
+        return CaptureContent(samples=samples, sigmf_meta=sigmf_meta, info=info)
+
 # --- Quality validation -----------------------------------------------
 
     def validate(

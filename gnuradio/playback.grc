@@ -60,18 +60,37 @@ blocks:
     coordinate: [448, 12]
     rotation: 0
     state: enabled
+- name: start_s
+  id: variable
+  parameters:
+    comment: 'Partial read: start offset in seconds (0 = from the beginning).'
+    value: '0'
+  states:
+    coordinate: [600, 12]
+    rotation: 0
+    state: enabled
+- name: duration_s
+  id: variable
+  parameters:
+    comment: 'Partial read: window length in seconds (0 = play to the end).'
+    value: '0'
+  states:
+    coordinate: [720, 12]
+    rotation: 0
+    state: enabled
 - name: blocks_file_source_0
   id: blocks_file_source
   parameters:
     affinity: ''
     alias: ''
     begin_tag: pmt.PMT_NIL
-    comment: 'Read the capture as complex float32 (== cf32_le).'
+    comment: 'Read the capture as complex float32 (== cf32_le). offset/length give
+      partial reading: start at start_s seconds, play duration_s seconds (0 = all).'
     file: capture_file
-    length: '0'
+    length: int(duration_s * samp_rate)
     maxoutbuf: '0'
     minoutbuf: '0'
-    offset: '0'
+    offset: int(start_s * samp_rate)
     repeat: 'True'
     type: complex
     vlen: '1'

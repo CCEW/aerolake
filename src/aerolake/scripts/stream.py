@@ -52,6 +52,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--frame-size", type=int, default=4096, help="Samples per frame.")
     parser.add_argument(
+        "--start",
+        type=float,
+        default=0.0,
+        help="Start offset in seconds — partial read (default 0).",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="Window length in seconds (default: to the end).",
+    )
+    parser.add_argument(
         "--no-realtime",
         action="store_true",
         help="Publish frames back-to-back without pacing.",
@@ -121,6 +133,8 @@ def main(
             key,
             frame_size=args.frame_size,
             realtime=realtime,
+            start_s=args.start,
+            duration_s=args.duration,
             on_frame=publisher.publish,
         )
     except StorageError as exc:

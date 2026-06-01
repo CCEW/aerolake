@@ -243,6 +243,41 @@ class StorageClient:
         log.info("storage.download.ok", size=len(data))
         return data
 
+    def download_range(self, key: str, start: int, end: int | None = None) -> bytes:
+        """Download only bytes ``[start, end]`` of an object (HTTP Range request).
+
+        This is the mechanism behind **partial / seeked reads**: instead of
+        pulling a whole (possibly multi-GB) capture, we fetch just the slice we
+        need. It maps to the S3 ``Range: bytes=start-end`` header, served by both
+        AWS and MinIO. ``end`` is **inclusive** (the S3 convention); if ``end``
+        is None, we read to the end of the object.
+
+        The caller computes the byte offsets from sample maths, e.g. to start at
+        t = 200 s of a cf32 capture: ``start = 200 * sample_rate * 8``.
+        """
+        byte_range = f"bytes={start}-{'' if end is None else end}"
+        log = logger.bind(bucket=self.bucket, key=key, byte_range=byte_range)
+        try:
+            response = self._client.get_object(
+                Bucket=self.bucket, Key=key, Range=byte_range
+            )
+            data: bytes = response["Body"].read()
+        except ClientError as exc:
+            log.error("storage.download_range.failed", error=str(exc))
+            raise StorageError(
+                f"Failed to range-download {key!r} ({byte_range})"
+            ) from exc
+        log.info("storage.download_range.ok", size=len(data))
+        return data
+
+    def object_size(self, key: str) -> int:
+        """Return an object's size in bytes via a HEAD request (no body)."""
+        try:
+            response = self._client.head_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            raise StorageError(f"head_object failed for {key!r}") from exc
+        return int(response["ContentLength"])
+
     # --- Listing and deletion --------------------------------------------
 
     def list_objects(self, prefix: str = "") -> Iterator[str]:

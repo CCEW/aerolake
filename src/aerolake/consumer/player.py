@@ -107,6 +107,8 @@ class CapturePlayer:
         *,
         frame_size: int = 4096,
         realtime: bool = True,
+        start_s: float = 0.0,
+        duration_s: float | None = None,
         on_frame: Callable[[int, np.ndarray], None] | None = None,
     ) -> PlaybackStats:
         """Read a capture and emit it frame-by-frame, paced at its sample rate.
@@ -142,8 +144,15 @@ class CapturePlayer:
         """
         log = logger.bind(data_key=data_key, frame_size=frame_size)
 
-        # Read + decode the capture through the normal reader path.
-        content = self._reader.read(data_key)
+        # Read + decode the capture. If a time window is requested (start_s or
+        # duration_s), use the partial Range read so we only fetch that slice;
+        # otherwise read the whole capture.
+        if start_s or duration_s is not None:
+            content = self._reader.read_segment(
+                data_key, start_s=start_s, duration_s=duration_s
+            )
+        else:
+            content = self._reader.read(data_key)
         samples = content.samples
 
         sample_rate = float(
