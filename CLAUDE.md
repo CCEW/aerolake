@@ -27,6 +27,7 @@ uv run aerolake-producer --preset gnss-l1 --duration 1.0   # generate+upload a s
 uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a prefix (read-only preview)
 uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
 uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
+uv run aerolake-play --prefix gnss_l1/        # replay a capture's samples at recorded cadence
 
 # Visualization GUI (Streamlit + Plotly; optional `gui` dependency group)
 uv sync --group gui                  # install the GUI runtime (streamlit + plotly)
@@ -67,7 +68,10 @@ a "curated" capture. Four packages under `src/aerolake/`:
   encodes them to SigMF bytes (`encode`), `orchestrator.py` (`capture_and_upload`) ties
   generate → encode → upload together.
 - **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, plus `validate()`
-  which runs the quality layer and promotes the capture's quality tag.
+  which runs the quality layer and promotes the capture's quality tag. `player.py`
+  (`CapturePlayer`, ADR-007) replays a capture's samples in frames paced at the recorded sample
+  rate (injectable clock for tests) — the software half of "playback" and the seed for the
+  deferred ZeroMQ stream.
 - **`quality/`** — `metrics.py` is **pure functions** (no I/O, no logging, no decisions:
   clipping ratio, RMS dBFS, invalid samples, DC offset, completeness, SigMF metadata validity).
   `checker.py` (`QualityChecker`/`QualityReport`) applies configurable `QualityThresholds` to
@@ -79,7 +83,7 @@ a "curated" capture. Four packages under `src/aerolake/`:
   `aerolake-gui` entry point.
 
 `scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `validate.py`,
-`catalog.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
+`catalog.py`, `play.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
 2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
 structlog logs go to stderr, keeping stdout clean for results (`--json`, tables).
 
@@ -149,6 +153,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-004 — prioritize data quality over streaming (reorders the roadmap)
 - ADR-005 — consumer-side quality tag promotion lifecycle (raw → validated/rejected)
 - ADR-006 — visualization GUI: Streamlit + Plotly web app
+- ADR-007 — playback strategy (software cadence replay now; GNU Radio + SDR re-emission later)
 
 ## Testing notes
 

@@ -24,6 +24,7 @@ aerolake-healthcheck = "aerolake.scripts.healthcheck:main"
 aerolake-producer = "aerolake.scripts.producer:main"
 aerolake-validate = "aerolake.scripts.validate:main"
 aerolake-list = "aerolake.scripts.catalog:main"
+aerolake-play = "aerolake.scripts.play:main"
 aerolake-gui = "aerolake.gui.launch:main"
 
 [dependency-groups]
