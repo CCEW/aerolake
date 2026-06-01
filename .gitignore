@@ -87,3 +87,7 @@ docs/context/transcripts/
 
 # Réglages locaux Claude Code (spécifiques à la machine, ne pas partager)
 .claude/settings.local.json
+
+# Scripts GNU Radio générés par GRC depuis les .grc (on versionne le .grc source)
+gnuradio/record.py
+gnuradio/playback.py

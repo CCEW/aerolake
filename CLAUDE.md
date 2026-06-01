@@ -90,6 +90,16 @@ a "curated" capture. Four packages under `src/aerolake/`:
 2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
 structlog logs go to stderr, keeping stdout clean for results (`--json`, tables).
 
+### GNU Radio flowgraphs (`gnuradio/`, ADR-007 layer 2)
+
+`gnuradio/` holds `record.grc` / `playback.grc` — **separate from the uv project**: they need a
+system GNU Radio (`sudo apt install gnuradio`, 3.10+) and run with the *system* Python that ships
+its bindings, not `.venv`. The bridge to the rest of AeroLake is the **`.sigmf-data` file itself**:
+it is raw `cf32_le`, which GNU Radio's File Source/Sink read/write natively as *complex* — no
+SigMF block needed. Validate a `.grc` headlessly with `grcc -o /tmp gnuradio/playback.grc`; the
+generated `.py` is gitignored. Real RF transmit (playback to a receiver) needs the **BladeRF**
+(the RTL-SDR is RX-only).
+
 ### Conventions that span multiple files
 
 These are the load-bearing decisions; read the referenced ADR before changing them.
