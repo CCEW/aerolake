@@ -28,6 +28,10 @@ uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a pr
 uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
 uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
 
+# Visualization GUI (Streamlit + Plotly; optional `gui` dependency group)
+uv sync --group gui                  # install the GUI runtime (streamlit + plotly)
+uv run --group gui aerolake-gui      # launch the web app (browser at localhost:8501)
+
 # Quality / linting / tests
 uv run ruff check .              # lint  (ruff config in pyproject; line-length 100, E501 ignored)
 uv run ruff format .             # format
@@ -68,6 +72,11 @@ a "curated" capture. Four packages under `src/aerolake/`:
   clipping ratio, RMS dBFS, invalid samples, DC offset, completeness, SigMF metadata validity).
   `checker.py` (`QualityChecker`/`QualityReport`) applies configurable `QualityThresholds` to
   those metrics and produces a pass/fail verdict.
+- **`gui/`** (ADR-006, optional `gui` dep group) — Streamlit web app. Same pure-vs-glue split:
+  `plots.py` is **pure DSP functions** (Welch spectrum, STFT spectrogram, constellation → Plotly
+  figures, unit-tested), `theme.py` is the aerospace dark styling, `app.py` is thin Streamlit glue
+  that reads via `CaptureReader` (never S3 directly) with cached reads, `launch.py` is the
+  `aerolake-gui` entry point.
 
 `scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `validate.py`,
 `catalog.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
@@ -139,6 +148,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-003 — metadata vs. tagging convention (the key layout + lifecycle)
 - ADR-004 — prioritize data quality over streaming (reorders the roadmap)
 - ADR-005 — consumer-side quality tag promotion lifecycle (raw → validated/rejected)
+- ADR-006 — visualization GUI: Streamlit + Plotly web app
 
 ## Testing notes
 

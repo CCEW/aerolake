@@ -24,6 +24,7 @@ aerolake-healthcheck = "aerolake.scripts.healthcheck:main"
 aerolake-producer = "aerolake.scripts.producer:main"
 aerolake-validate = "aerolake.scripts.validate:main"
 aerolake-list = "aerolake.scripts.catalog:main"
+aerolake-gui = "aerolake.gui.launch:main"
 
 [dependency-groups]
 dev = [
@@ -32,6 +33,18 @@ dev = [
     "ruff>=0.3.0",
     "mypy>=1.9.0",
     "moto[s3]>=5.0.0",
+    # plotly lives here too (not just in the gui group) so the pure plot
+    # functions in aerolake.gui.plots can be unit-tested in CI without pulling
+    # in the heavier streamlit runtime.
+    "plotly>=5.24.0",
+]
+
+# Optional GUI runtime. Install with `uv sync --group gui`; run the app with
+# `uv run --group gui aerolake-gui`. Kept out of the core dependencies so the
+# pipeline/CLIs stay lean and don't drag in the web stack.
+gui = [
+    "streamlit>=1.40.0",
+    "plotly>=5.24.0",
 ]
 
 [build-system]
@@ -63,5 +76,5 @@ plugins = ["pydantic.mypy"]
 # Third-party libraries that ship no type stubs / py.typed marker. Without this
 # mypy emits "missing library stubs" errors for imports we don't control.
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "sigmf.*"]
+module = ["boto3.*", "botocore.*", "sigmf.*", "streamlit.*", "plotly.*"]
 ignore_missing_imports = true
