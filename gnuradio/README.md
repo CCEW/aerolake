@@ -28,10 +28,25 @@ Real RF re-emission (transmitting a capture over the air) needs a **TX-capable
 SDR — the BladeRF**. The **RTL-SDR is receive-only** and cannot be used for the
 playback/transmit demos.
 
-## Files (added once GNU Radio is installed)
+## Files
 
-- `record.grc` — capture → `.sigmf-data` file.
-- `playback.grc` — `.sigmf-data` file → throttle → spectrum sink (→ SDR TX later).
+- `record.grc` — **synthetic** source → Head → File Sink (`.sigmf-data`). No
+  hardware; useful to test the chain without an SDR.
+- **`record_sdr.grc`** — **real SDR** capture via a **Soapy Custom Source** →
+  Head → File Sink. One flowgraph for *any* SoapySDR device: set the
+  `sdr_driver` variable to `"rtlsdr"`, `"bladerf"`, `"hackrf"`, … (plus `freq`,
+  `samp_rate`, `gain`, `agc`, `n_samples`). The drivers for BladeRF and RTL-SDR
+  are already installed (they came with GNU Radio).
+- `playback.grc` — `.sigmf-data` File Source → Throttle → spectrum + waterfall.
+  Supports partial reading (`start_s` / `duration_s` → File Source
+  offset/length, ADR-009). An SDR **sink** for real TX comes later (BladeRF —
+  the RTL-SDR is RX-only).
+
+### Per-device caveats (record_sdr.grc)
+
+- **RTL-SDR**: max sample rate ~2.4 MS/s (so fine for GNSS/Iridium at 2 MHz,
+  **not** for Starlink 25 MHz). RX only.
+- **BladeRF**: up to 61 MS/s (needed for the 25 MHz Starlink target); TX-capable.
 
 Each `.grc` is the GNU Radio Companion source; GRC generates a runnable `.py`
 from it. Generated `.py` files are not committed (see `.gitignore`).
