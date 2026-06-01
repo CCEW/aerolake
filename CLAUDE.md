@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 AeroLake is an RF data-lakehouse pipeline (LASSENA project). It captures radio-frequency
 signals, encodes them as [SigMF](https://github.com/sigmf/SigMF) (a `.sigmf-data` binary blob +
 a `.sigmf-meta` JSON sidecar), stores them in a MinIO bucket, and reads/validates them back.
-Real SDR capture and a ZeroMQ streaming bus are on the roadmap but **not yet built** — today the
-producer generates synthetic signals and everything is batch.
+Stored captures can be replayed at their recorded cadence and streamed over a ZeroMQ Pub/Sub bus
+(ADR-007/008). Real SDR capture and GNU Radio Record/Playback are on the roadmap but **not yet
+built** — today the producer generates **synthetic** signals and ingestion is batch.
 
 ## Commands
 
@@ -28,6 +29,7 @@ uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a pr
 uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
 uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
 uv run aerolake-play --prefix gnss_l1/        # replay a capture's samples at recorded cadence
+uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over ZeroMQ Pub/Sub
 
 # Visualization GUI (Streamlit + Plotly; optional `gui` dependency group)
 uv sync --group gui                  # install the GUI runtime (streamlit + plotly)
@@ -70,8 +72,9 @@ a "curated" capture. Four packages under `src/aerolake/`:
 - **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, plus `validate()`
   which runs the quality layer and promotes the capture's quality tag. `player.py`
   (`CapturePlayer`, ADR-007) replays a capture's samples in frames paced at the recorded sample
-  rate (injectable clock for tests) — the software half of "playback" and the seed for the
-  deferred ZeroMQ stream.
+  rate (injectable clock for tests) — the software half of "playback". `stream.py`
+  (`FramePublisher`/`FrameSubscriber`, ADR-008) publishes those frames over a ZeroMQ PUB/SUB bus
+  (pure `encode_frame`/`decode_frame` wire format; injectable socket for tests).
 - **`quality/`** — `metrics.py` is **pure functions** (no I/O, no logging, no decisions:
   clipping ratio, RMS dBFS, invalid samples, DC offset, completeness, SigMF metadata validity).
   `checker.py` (`QualityChecker`/`QualityReport`) applies configurable `QualityThresholds` to
@@ -83,7 +86,7 @@ a "curated" capture. Four packages under `src/aerolake/`:
   `aerolake-gui` entry point.
 
 `scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `validate.py`,
-`catalog.py`, `play.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
+`catalog.py`, `play.py`, `stream.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
 2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
 structlog logs go to stderr, keeping stdout clean for results (`--json`, tables).
 
@@ -154,6 +157,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-005 — consumer-side quality tag promotion lifecycle (raw → validated/rejected)
 - ADR-006 — visualization GUI: Streamlit + Plotly web app
 - ADR-007 — playback strategy (software cadence replay now; GNU Radio + SDR re-emission later)
+- ADR-008 — ZeroMQ Pub/Sub streaming of capture frames (reactivates ADR-002's streaming half)
 
 ## Testing notes
 
