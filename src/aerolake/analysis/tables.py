@@ -179,6 +179,50 @@ def _scatter_colored(x, y, color, title, xtitle, ytitle, cbar) -> go.Figure:
 
 # --- GPS ---
 
+def gps_map_fig(t: AnalysisTable) -> go.Figure:
+    """Interactive OpenStreetMap of the ground track, coloured by altitude.
+
+    Uses Plotly's MapLibre ``Scattermap`` with the free ``open-street-map``
+    style — no API token needed (tiles are fetched by the browser).
+    """
+    tmpl = theme.register_theme()
+    lat = t.column("Latitude")
+    lon = t.column("Longitude")
+    color = t.column("Altitude") if t.has_column("Altitude") else None
+
+    fig = go.Figure(
+        go.Scattermap(
+            lat=lat,
+            lon=lon,
+            mode="markers+lines",
+            marker=dict(
+                size=7,
+                color=color,
+                colorscale=theme.HEATMAP_COLORSCALE,
+                showscale=color is not None,
+                colorbar=dict(title="Alt (m)"),
+            ),
+            line=dict(color=theme.ACCENT, width=2),
+        )
+    )
+    # Center on the track; pick a zoom from the coordinate span (heuristic).
+    center_lat = float(np.mean(lat)) if lat.size else 0.0
+    center_lon = float(np.mean(lon)) if lon.size else 0.0
+    span = max(float(np.ptp(lat)), float(np.ptp(lon)), 1e-3) if lat.size else 1.0
+    zoom = float(np.clip(11.0 - np.log2(span / 0.01), 3.0, 16.0))
+    fig.update_layout(
+        template=tmpl,
+        title="GPS track (OpenStreetMap)",
+        map=dict(
+            style="open-street-map",
+            center=dict(lat=center_lat, lon=center_lon),
+            zoom=zoom,
+        ),
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+    return fig
+
+
 def gps_track_fig(t: AnalysisTable) -> go.Figure:
     """Ground track: longitude vs latitude, coloured by altitude."""
     color = t.column("Altitude") if t.has_column("Altitude") else None
@@ -252,7 +296,8 @@ def iridium_frequency_over_time_fig(t: AnalysisTable) -> go.Figure:
 # Which figures to show for each kind: list of (title, builder).
 _FIGURES: dict[str, list[tuple[str, Callable[[AnalysisTable], go.Figure]]]] = {
     KIND_GPS: [
-        ("🗺️ Track", gps_track_fig),
+        ("🗺️ Map", gps_map_fig),
+        ("📍 Track (X/Y)", gps_track_fig),
         ("⛰️ Altitude", gps_altitude_fig),
         ("🛰️ Satellites/Fix", gps_satellites_fig),
     ],

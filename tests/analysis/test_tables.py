@@ -94,7 +94,7 @@ def test_figures_for_each_kind(tmp_path) -> None:
     p = str(tmp_path / "multi.h5")
     _make_multimodal(p)
     for ds, n_expected in [
-        ("GPS_Analysis/test_01", 3),
+        ("GPS_Analysis/test_01", 4),   # map + track + altitude + satellites
         ("IMU_Analysis/test_01", 3),
         ("Iridium_Analysis/test_01", 4),
     ]:

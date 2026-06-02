@@ -39,5 +39,47 @@ jobs:
         run: uv run mypy src
 
       - name: Tests (pytest)
-        # Tests are fully self-contained: moto mocks S3, so no MinIO is needed.
-        run: uv run pytest
+        # Unit tests are self-contained: moto mocks S3, so no MinIO is needed.
+        # The integration test (real MinIO) runs in its own job below.
+        run: uv run pytest -m "not integration"
+
+  integration:
+    name: Integration (real MinIO)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start MinIO
+        # `minio/minio` needs the `server` command, which GitHub Actions
+        # `services:` can't pass — so we run it as a plain container.
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
+
+      - name: Integration tests (real MinIO round-trip)
+        env:
+          AEROLAKE_RUN_INTEGRATION: "1"
+          AEROLAKE_S3_ENDPOINT: http://localhost:9000
+          AEROLAKE_S3_ACCESS_KEY: minioadmin
+          AEROLAKE_S3_SECRET_KEY: minioadmin
+          AEROLAKE_S3_BUCKET: aerolake-ci
+          AEROLAKE_S3_REGION: us-east-1
+        run: uv run pytest -m integration

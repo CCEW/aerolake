@@ -95,7 +95,8 @@ a "curated" capture. Four packages under `src/aerolake/`:
   `GPS_Analysis`/`IMU_Analysis`/`Iridium_Analysis` groups — **not** raw IQ, never enters MinIO).
   `tables.py` = pure loader (`load_table`/`list_datasets`, kind detection) + per-modality Plotly
   figures (`figures_for`, tested); `app.py` = Streamlit app `aerolake-analysis` (pick file → run →
-  type-aware plots: GPS track, IMU orientation, Iridium SNR).
+  type-aware plots: GPS **OpenStreetMap map** (`go.Scattermap`, no token) + X/Y track + altitude,
+  IMU orientation/accel/gyro, Iridium SNR/frequency).
 
 `scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `validate.py`,
 `catalog.py`, `play.py`, `stream.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
@@ -190,3 +191,9 @@ Tests use **moto** to mock S3 (no real MinIO needed). `tests/conftest.py` provid
 (isolated from the developer's `.env` by passing values as kwargs, with `s3_endpoint=""` so moto
 intercepts), `mock_s3` (a moto-backed client with the test bucket pre-created), and `storage_client`
 (a `StorageClient` wired to the mock). Inject these rather than hitting a live backend.
+
+An opt-in **integration test** (`tests/integration/`, marker `integration`) exercises a *real*
+MinIO end-to-end (multipart + Range + tagging). It's skipped unless `AEROLAKE_RUN_INTEGRATION=1`;
+the CI `integration` job spins up a MinIO container (Docker) and runs `pytest -m integration`.
+The producer/ingest declare `core:version` from `sigmf.__specification__` (see
+`sigmf_writer.SIGMF_VERSION`), not a hard-coded string.

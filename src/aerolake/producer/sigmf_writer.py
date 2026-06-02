@@ -15,6 +15,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+import sigmf
 from sigmf import SigMFFile
 
 from aerolake.producer.synthetic import SyntheticSignal
@@ -22,6 +23,11 @@ from aerolake.producer.synthetic import SyntheticSignal
 # SigMF datatype string for np.complex64.
 # Format: complex float 32-bit little-endian. See SigMF spec, "Datatypes".
 SIGMF_DATATYPE_CF32_LE = "cf32_le"
+
+# SigMF *specification* version we declare in core:version. We derive it from
+# the installed sigmf library (its __specification__) rather than hard-coding a
+# string, so what we write always matches the spec the tooling implements.
+SIGMF_VERSION: str = getattr(sigmf, "__specification__", "1.2.6")
 
 
 @dataclass(frozen=True)
@@ -84,7 +90,7 @@ def encode(
             "core:description": signal.description,
             "core:recorder": recorder,
             "core:hw": hardware,
-            "core:version": "1.0.0",
+            "core:version": SIGMF_VERSION,
         },
         "captures": [
             {

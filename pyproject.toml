@@ -74,6 +74,9 @@ ignore = ["E501"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: real round-trip against a live MinIO (opt-in via AEROLAKE_RUN_INTEGRATION=1)",
+]
 
 [tool.mypy]
 python_version = "3.12"

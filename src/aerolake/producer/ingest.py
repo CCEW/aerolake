@@ -34,6 +34,7 @@ import structlog
 from sigmf import SigMFFile
 
 from aerolake.common.storage import StorageClient
+from aerolake.producer.sigmf_writer import SIGMF_VERSION
 
 logger = structlog.get_logger(__name__)
 
@@ -170,7 +171,7 @@ def ingest_file(
             "core:description": description,
             "core:recorder": recorder,
             "core:hw": hardware,
-            "core:version": "1.0.0",
+            "core:version": SIGMF_VERSION,
         },
         "captures": [
             {
