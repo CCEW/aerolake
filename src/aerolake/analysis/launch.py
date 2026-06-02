@@ -1,4 +1,4 @@
-"""Launcher for the Iridium analysis Streamlit app (``aerolake-iridium``)."""
+"""Launcher for the analysis Streamlit app (``aerolake-analysis``)."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from pathlib import Path
 
 
 def main() -> None:
-    """Start Streamlit on the bundled Iridium analysis app."""
+    """Start Streamlit on the bundled analysis app."""
     from streamlit.web import cli as stcli
 
-    app_path = Path(__file__).with_name("iridium_app.py")
+    app_path = Path(__file__).with_name("app.py")
     sys.argv = ["streamlit", "run", str(app_path)]
     raise SystemExit(stcli.main())
 

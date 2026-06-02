@@ -35,7 +35,7 @@ uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over 
 # Visualization GUI (Streamlit + Plotly; optional `gui` dependency group)
 uv sync --group gui                  # install the GUI runtime (streamlit + plotly)
 uv run --group gui aerolake-gui      # launch the web app (browser at localhost:8501)
-uv run --group gui aerolake-iridium  # BONUS: viewer for decoded Iridium .h5 analysis tables (NOT IQ)
+uv run --group gui aerolake-analysis # BONUS: viewer for decoded GPS/IMU/Iridium .h5 tables (NOT IQ)
 
 # Quality / linting / tests
 uv run ruff check .              # lint  (ruff config in pyproject; line-length 100, E501 ignored)
@@ -91,9 +91,11 @@ a "curated" capture. Four packages under `src/aerolake/`:
   that reads via `CaptureReader` (never S3 directly) with cached reads, `launch.py` is the
   `aerolake-gui` entry point.
 - **`analysis/`** (ADR-011, BONUS, optional `gui` deps + `h5py`) — *separate from the IQ core*.
-  Viewer for **decoded** Iridium `.h5` tables (GR-Iridium Toolkit output: burst timestamp/
-  satellite/SNR/frequency — **not** raw IQ, never enters MinIO). `iridium.py` = pure loader +
-  Plotly figures (tested), `iridium_app.py` = Streamlit app `aerolake-iridium`.
+  Multi-modal viewer for **decoded** `.h5` tables (GR-Iridium Toolkit + ublox/VN100 output:
+  `GPS_Analysis`/`IMU_Analysis`/`Iridium_Analysis` groups — **not** raw IQ, never enters MinIO).
+  `tables.py` = pure loader (`load_table`/`list_datasets`, kind detection) + per-modality Plotly
+  figures (`figures_for`, tested); `app.py` = Streamlit app `aerolake-analysis` (pick file → run →
+  type-aware plots: GPS track, IMU orientation, Iridium SNR).
 
 `scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `validate.py`,
 `catalog.py`, `play.py`, `stream.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
@@ -180,7 +182,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-008 — ZeroMQ Pub/Sub streaming of capture frames (reactivates ADR-002's streaming half)
 - ADR-009 — partial/seeked reads via HTTP Range Requests (Python `read_segment` + GNU Radio offset/length)
 - ADR-010 — streaming multipart upload to bypass RAM (`StorageClient.upload_multipart`)
-- ADR-011 — Iridium analysis viewer for decoded `.h5` tables (bonus, separate from the IQ core)
+- ADR-011 — analysis viewer for decoded `.h5` tables (GPS/IMU/Iridium; bonus, separate from the IQ core)
 
 ## Testing notes
 

@@ -48,6 +48,21 @@ touch MinIO, SigMF, or the capture pipeline.
   captures. Real Iridium IQ (for the lake) still comes from the SDR capture or
   raw IQ files, ingested via `aerolake-ingest`.
 
+## Update (2026-06-02) — generalised to GPS / IMU / Iridium
+
+Inspecting `flight_test.h5` / `vehicle_test.h5` revealed they bundle **three
+modalities** per file (`GPS_Analysis`, `IMU_Analysis`, `Iridium_Analysis`), each
+with many test-run datasets — not just Iridium. The viewer was therefore
+generalised (same decision, broader scope, still outside the IQ core):
+
+- `iridium.py` → **`tables.py`**: a generic `load_table`/`list_datasets` +
+  kind detection + per-modality figures (`figures_for`), with a generic
+  column-vs-time fallback.
+- `iridium_app.py`/`iridium_launch.py` → **`app.py`/`launch.py`**; the entry
+  point `aerolake-iridium` → **`aerolake-analysis`** (file picker → dataset
+  picker → type-aware plots: GPS ground track, IMU orientation/accel/gyro,
+  Iridium SNR/frequency).
+
 ## References
 
 - `src/aerolake/analysis/iridium.py`, `iridium_app.py`; `tests/analysis/`
