@@ -126,6 +126,25 @@ def test_constellation_downsamples_large_inputs(tone) -> None:
     assert len(fig.data[0].x) == 1000
 
 
+def test_overview_figures_from_slices(tone) -> None:
+    """Whole-capture overview figures build from a list of equal-length slices."""
+    slices = [tone[i * 1000 : i * 1000 + 1024] for i in range(8)]
+    times = [i * 0.5 for i in range(8)]
+    sg = plots.overview_spectrogram_figure(slices, SAMPLE_RATE, CENTER_FREQ, times)
+    sp = plots.overview_spectrum_figure(slices, SAMPLE_RATE, CENTER_FREQ)
+    assert isinstance(sg, go.Figure)
+    assert isinstance(sp, go.Figure)
+
+
+def test_overview_figures_handle_empty() -> None:
+    assert isinstance(
+        plots.overview_spectrogram_figure([], SAMPLE_RATE, CENTER_FREQ, []), go.Figure
+    )
+    assert isinstance(
+        plots.overview_spectrum_figure([], SAMPLE_RATE, CENTER_FREQ), go.Figure
+    )
+
+
 def test_figures_handle_empty_input() -> None:
     empty = np.array([], dtype=np.complex64)
     for fig in (

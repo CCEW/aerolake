@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import streamlit as st
 
 from aerolake.common.storage import StorageClient, StorageError
@@ -56,16 +57,37 @@ def _list_captures(prefix: str) -> list[str]:
 
 @st.cache_data(show_spinner="Inspecting capture…")
 def _capture_overview(data_key: str):
-    """Cheap HEAD-only overview: (sample_rate, total_samples, tags, metadata).
+    """Cheap HEAD-only overview: (sample_rate, total_samples, center_freq, tags).
 
-    Lets us show the total duration and bound the time-window slider WITHOUT
+    Lets us show duration + metrics and bound the time-window slider WITHOUT
     downloading any samples (the capture may be gigabytes).
     """
     storage, reader = _get_clients()
     info = reader.inspect(data_key)
     total_samples = storage.object_size(data_key) // 8  # cf32 = 8 bytes/sample
     sample_rate = float(info.metadata.get("sample-rate", 0.0)) or 1.0
-    return sample_rate, total_samples, info.tags, info.metadata
+    center_freq = float(info.metadata.get("center-freq", 0.0))
+    return sample_rate, total_samples, center_freq, info.tags
+
+
+@st.cache_data(show_spinner="Building whole-capture overview…")
+def _overview(data_key: str, sample_rate: float, n_slices: int = 240, slice_len: int = 4096):
+    """Read ``n_slices`` short windows evenly spread across the WHOLE capture.
+
+    Only a few MB are transferred (n_slices x slice_len x 8 bytes) via Range
+    reads — enough to render a full-duration spectrogram of a multi-GB capture.
+    Returns (slices, times_s).
+    """
+    storage, _ = _get_clients()
+    total = storage.object_size(data_key) // 8
+    slice_len = min(slice_len, total)
+    starts = np.linspace(0, max(0, total - slice_len), n_slices).astype(int)
+    slices, times = [], []
+    for s0 in starts:
+        raw = storage.download_range(data_key, int(s0) * 8, (int(s0) + slice_len) * 8 - 1)
+        slices.append(np.frombuffer(raw, dtype=np.complex64))
+        times.append(float(s0) / sample_rate)
+    return slices, times
 
 
 @st.cache_data(show_spinner="Reading window…")
@@ -172,41 +194,29 @@ def _run() -> None:
         "Constellation points", 1000, 20000, value=5000, step=1000
     )
 
-    # --- Time window (partial read) ---------------------------------------
-    # We load only a window of the capture via a Range request, so even a
-    # multi-GB recording opens instantly and you can seek through its duration.
-    overview_sr, total_samples, _tags_o, _meta_o = _capture_overview(data_key)
-    total_duration = total_samples / overview_sr if overview_sr else 0.0
+    # --- Cheap overview (no samples loaded): duration, metrics, tags ------
+    sample_rate, total_samples, center_freq, tags = _capture_overview(data_key)
+    total_duration = total_samples / sample_rate if sample_rate else 0.0
 
     st.sidebar.divider()
     st.sidebar.header("Time window")
     st.sidebar.caption(f"Total: {total_duration:,.1f} s — {total_samples:,} samples")
-    window_s = st.sidebar.select_slider(
-        "Window (s)", options=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0], value=2.0
-    )
-    max_start = max(0.0, round(total_duration - window_s, 1))
-    start_s = (
-        st.sidebar.slider("Start (s)", 0.0, max_start, 0.0, step=0.5)
-        if max_start > 0
-        else 0.0
+    # Overview mode = a coarse spectrogram of the WHOLE capture (strided reads).
+    overview_mode = st.sidebar.toggle(
+        "🔭 Whole-capture overview",
+        value=False,
+        help="Coarse spectrogram across the FULL duration (cheap strided reads).",
     )
 
-    # --- Load just that window --------------------------------------------
-    samples, sigmf_meta, tags, _metadata = _load_segment(data_key, start_s, window_s)
-    sample_rate = float(sigmf_meta.get("global", {}).get("core:sample_rate", 0.0))
-    center_freq = float(
-        sigmf_meta.get("captures", [{}])[0].get("core:frequency", 0.0)
-    )
-
-    # --- Header strip: key facts + quality verdict ------------------------
+    # --- Header strip (from cheap metadata — no samples yet) --------------
     info_col, quality_col = st.columns([3, 1])
     with info_col:
         st.markdown(f"**Key:** `{data_key}`")
         st.markdown(
             f"**Signal type:** {tags.get('signal-type', '—')} &nbsp;|&nbsp; "
             f"**Hardware:** {tags.get('hardware', '—')} &nbsp;|&nbsp; "
-            f"**Window:** {start_s:.1f}-{start_s + window_s:.1f}s of "
-            f"{total_duration:.0f}s &nbsp;|&nbsp; **Samples:** {len(samples):,}",
+            f"**Total:** {total_duration:,.0f} s &nbsp;|&nbsp; "
+            f"**Samples:** {total_samples:,}",
             unsafe_allow_html=True,
         )
     with quality_col:
@@ -214,12 +224,10 @@ def _run() -> None:
             f"**Quality:** {_quality_badge(tags.get('quality', '—'))}",
             unsafe_allow_html=True,
         )
-
-    # Quick metrics row from the SigMF metadata.
     m1, m2, m3 = st.columns(3)
     m1.metric("Sample rate", f"{sample_rate / 1e6:.3f} MS/s")
     m2.metric("Center freq", f"{center_freq / 1e6:.3f} MHz")
-    m3.metric("Datatype", sigmf_meta.get("global", {}).get("core:datatype", "—"))
+    m3.metric("Duration", f"{total_duration:,.0f} s")
 
     # --- Quality report (if one was written by validate) ------------------
     report = _load_quality_report(data_key)
@@ -231,36 +239,62 @@ def _run() -> None:
                 st.write("**Failed checks:**")
                 for f in failed:
                     st.write(f"- {f}")
-            # Show the raw measured metrics as a compact table.
             st.json(
                 {
                     k: report[k]
                     for k in (
-                        "clipping_ratio",
-                        "rms_power_dbfs",
-                        "invalid_count",
-                        "dc_offset_i",
-                        "dc_offset_q",
-                        "sample_completeness",
+                        "clipping_ratio", "rms_power_dbfs", "invalid_count",
+                        "dc_offset_i", "dc_offset_q", "sample_completeness",
                         "metadata_valid",
                     )
                     if k in report
                 }
             )
 
-    # --- Plain-language one-line summary ----------------------------------
-    # A quick "what does this signal look like?" sentence anyone can read,
-    # computed from the spectrum (peak frequency + height above noise).
+    if overview_mode:
+        # Whole-capture waterfall: only a few MB read across the full duration.
+        slices, times = _overview(data_key, sample_rate)
+        st.markdown(
+            f"<div class='aerolake-summary'>🔭 Whole-capture overview — "
+            f"{len(slices)} slices across {total_duration:,.0f} s</div>",
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        tab_sg, tab_sp = st.tabs(["🌈 Full spectrogram", "📈 Average spectrum"])
+        with tab_sg:
+            if explain:
+                _explain_box("spectrogram")
+            st.plotly_chart(
+                plots.overview_spectrogram_figure(slices, sample_rate, center_freq, times),
+                use_container_width=True,
+            )
+        with tab_sp:
+            st.plotly_chart(
+                plots.overview_spectrum_figure(slices, sample_rate, center_freq),
+                use_container_width=True,
+            )
+        return
+
+    # --- Detailed window mode ---------------------------------------------
+    window_s = st.sidebar.select_slider(
+        "Window (s)", options=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0], value=2.0
+    )
+    max_start = max(0.0, round(total_duration - window_s, 1))
+    start_s = (
+        st.sidebar.slider("Start (s)", 0.0, max_start, 0.0, step=0.5)
+        if max_start > 0
+        else 0.0
+    )
+    samples, _sigmf_meta, _tags, _metadata = _load_segment(data_key, start_s, window_s)
+
     summary = plots.describe_signal(samples, sample_rate, center_freq)
     st.markdown(
-        f"<div class='aerolake-summary'>📡 {summary}</div>",
+        f"<div class='aerolake-summary'>📡 {summary} &nbsp;"
+        f"(window {start_s:.1f}-{start_s + window_s:.1f}s)</div>",
         unsafe_allow_html=True,
     )
-    st.write("")  # a little breathing room
+    st.write("")
 
-    # --- The plots, one per tab -------------------------------------------
-    # Tabs keep the page tidy (no endless scrolling). Each tab optionally leads
-    # with its plain-language explanation when Explain mode is on.
     tab_spectrum, tab_spectrogram, tab_constellation = st.tabs(
         ["📈 Spectrum", "🌈 Spectrogram", "✴️ Constellation"]
     )

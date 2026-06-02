@@ -390,6 +390,80 @@ def constellation_figure(
     return fig
 
 
+def _stack_power(slices: list[np.ndarray], sample_rate: float):
+    """FFT each equal-length slice; return (freqs_hz, power[T, F]) linear power."""
+    length = len(slices[0])
+    window = np.hanning(length)
+    power = np.empty((len(slices), length))
+    for i, s in enumerate(slices):
+        spec = np.fft.fftshift(np.fft.fft(s * window))
+        power[i] = np.abs(spec) ** 2
+    freqs_hz = np.fft.fftshift(np.fft.fftfreq(length, d=1.0 / sample_rate))
+    return freqs_hz, power
+
+
+def overview_spectrogram_figure(
+    slices: list[np.ndarray],
+    sample_rate: float,
+    center_freq: float,
+    times_s: list[float],
+) -> go.Figure:
+    """Coarse spectrogram across a WHOLE capture, from strided slices.
+
+    ``slices`` are short, equal-length sample windows read at evenly-spaced
+    times across the recording (via Range reads) — so we visualise an
+    hours-long capture by transferring only a few MB. The result is the
+    full-duration waterfall.
+    """
+    template = theme.register_theme()
+    if not slices:
+        return _empty_figure("No samples to display", template)
+    freqs_hz, power = _stack_power(slices, sample_rate)
+    power_db = 10.0 * np.log10(power + _DB_EPS)
+    power_db = power_db - power_db.max()
+    fig = go.Figure(
+        go.Heatmap(
+            z=power_db.T,
+            x=np.asarray(times_s),
+            y=(freqs_hz + center_freq) / 1e6,
+            colorscale=theme.HEATMAP_COLORSCALE,
+            colorbar=dict(title="dB"),
+        )
+    )
+    fig.update_layout(
+        template=template,
+        title="Whole-capture spectrogram (overview)",
+        xaxis_title="Time (s)",
+        yaxis_title="Frequency (MHz)",
+    )
+    return fig
+
+
+def overview_spectrum_figure(
+    slices: list[np.ndarray], sample_rate: float, center_freq: float
+) -> go.Figure:
+    """Average spectrum over the whole capture (mean of the strided slices)."""
+    template = theme.register_theme()
+    if not slices:
+        return _empty_figure("No samples to display", template)
+    freqs_hz, power = _stack_power(slices, sample_rate)
+    avg_db = 10.0 * np.log10(power.mean(axis=0) + _DB_EPS)
+    avg_db = avg_db - avg_db.max()
+    fig = go.Figure(
+        go.Scatter(
+            x=(freqs_hz + center_freq) / 1e6, y=avg_db,
+            mode="lines", line=dict(color=theme.ACCENT, width=1.5),
+        )
+    )
+    fig.update_layout(
+        template=template,
+        title="Average spectrum over the whole capture",
+        xaxis_title="Frequency (MHz)",
+        yaxis_title="Power (dB, rel. peak)",
+    )
+    return fig
+
+
 def _empty_figure(message: str, template: str) -> go.Figure:
     """A themed placeholder figure with a centered message."""
     fig = go.Figure()
