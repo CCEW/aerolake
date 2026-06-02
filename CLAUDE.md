@@ -89,7 +89,8 @@ a "curated" capture. Four packages under `src/aerolake/`:
 - **`gui/`** (ADR-006, optional `gui` dep group) — Streamlit web app. Same pure-vs-glue split:
   `plots.py` is **pure DSP functions** (Welch spectrum, STFT spectrogram, constellation → Plotly
   figures, unit-tested), `theme.py` is the aerospace dark styling, `app.py` is thin Streamlit glue
-  that reads via `CaptureReader` (never S3 directly) with cached reads, `launch.py` is the
+  that reads via `CaptureReader` (never S3 directly), loading a **time window** via `read_segment`
+  (partial read — so multi-GB captures open instantly and you can seek), `launch.py` is the
   `aerolake-gui` entry point.
 - **`analysis/`** (ADR-011, BONUS, optional `gui` deps + `h5py`) — *separate from the IQ core*.
   Multi-modal viewer for **decoded** `.h5` tables (GR-Iridium Toolkit + ublox/VN100 output:

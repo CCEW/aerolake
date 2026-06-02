@@ -54,16 +54,29 @@ def _list_captures(prefix: str) -> list[str]:
     return reader.list_captures(prefix=prefix)
 
 
-@st.cache_data(show_spinner="Reading capture…")
-def _load_capture(data_key: str):
-    """Download + decode a capture, returning only picklable parts.
+@st.cache_data(show_spinner="Inspecting capture…")
+def _capture_overview(data_key: str):
+    """Cheap HEAD-only overview: (sample_rate, total_samples, tags, metadata).
 
-    ``cache_data`` memoises by argument (the key), so re-selecting a capture
-    you've already opened is instant. We return plain values (numpy array +
-    dicts) rather than the CaptureContent dataclass so Streamlit can cache them.
+    Lets us show the total duration and bound the time-window slider WITHOUT
+    downloading any samples (the capture may be gigabytes).
+    """
+    storage, reader = _get_clients()
+    info = reader.inspect(data_key)
+    total_samples = storage.object_size(data_key) // 8  # cf32 = 8 bytes/sample
+    sample_rate = float(info.metadata.get("sample-rate", 0.0)) or 1.0
+    return sample_rate, total_samples, info.tags, info.metadata
+
+
+@st.cache_data(show_spinner="Reading window…")
+def _load_segment(data_key: str, start_s: float, duration_s: float):
+    """Read ONLY a time window via an HTTP Range request (partial read).
+
+    This is what makes the explorer usable on multi-GB captures: we never load
+    more than ``duration_s`` of samples, and ``start_s`` lets you seek anywhere.
     """
     _, reader = _get_clients()
-    content = reader.read(data_key)
+    content = reader.read_segment(data_key, start_s=start_s, duration_s=duration_s)
     return content.samples, content.sigmf_meta, content.info.tags, content.info.metadata
 
 
@@ -159,8 +172,27 @@ def _run() -> None:
         "Constellation points", 1000, 20000, value=5000, step=1000
     )
 
-    # --- Load the selected capture ----------------------------------------
-    samples, sigmf_meta, tags, _metadata = _load_capture(data_key)
+    # --- Time window (partial read) ---------------------------------------
+    # We load only a window of the capture via a Range request, so even a
+    # multi-GB recording opens instantly and you can seek through its duration.
+    overview_sr, total_samples, _tags_o, _meta_o = _capture_overview(data_key)
+    total_duration = total_samples / overview_sr if overview_sr else 0.0
+
+    st.sidebar.divider()
+    st.sidebar.header("Time window")
+    st.sidebar.caption(f"Total: {total_duration:,.1f} s — {total_samples:,} samples")
+    window_s = st.sidebar.select_slider(
+        "Window (s)", options=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0], value=2.0
+    )
+    max_start = max(0.0, round(total_duration - window_s, 1))
+    start_s = (
+        st.sidebar.slider("Start (s)", 0.0, max_start, 0.0, step=0.5)
+        if max_start > 0
+        else 0.0
+    )
+
+    # --- Load just that window --------------------------------------------
+    samples, sigmf_meta, tags, _metadata = _load_segment(data_key, start_s, window_s)
     sample_rate = float(sigmf_meta.get("global", {}).get("core:sample_rate", 0.0))
     center_freq = float(
         sigmf_meta.get("captures", [{}])[0].get("core:frequency", 0.0)
@@ -173,7 +205,8 @@ def _run() -> None:
         st.markdown(
             f"**Signal type:** {tags.get('signal-type', '—')} &nbsp;|&nbsp; "
             f"**Hardware:** {tags.get('hardware', '—')} &nbsp;|&nbsp; "
-            f"**Samples:** {len(samples):,}",
+            f"**Window:** {start_s:.1f}-{start_s + window_s:.1f}s of "
+            f"{total_duration:.0f}s &nbsp;|&nbsp; **Samples:** {len(samples):,}",
             unsafe_allow_html=True,
         )
     with quality_col:
