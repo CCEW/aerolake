@@ -8,13 +8,15 @@ conversion.
 from __future__ import annotations
 
 import json
+import os
 
 import numpy as np
+import pytest
 
 from aerolake.common.storage import StorageClient
 from aerolake.consumer.reader import CaptureReader
-from aerolake.producer.ingest import ingest_file
-from aerolake.scripts.ingest import main
+from aerolake.producer.ingest import ingest_file, ingest_files
+from aerolake.scripts.ingest import _resolve_files, main
 
 
 def test_ingest_cf32_file_roundtrips(storage_client: StorageClient, tmp_path) -> None:
@@ -124,3 +126,61 @@ def test_ingest_cli_missing_file_returns_two(storage_client: StorageClient) -> N
         storage_client=storage_client,
     )
     assert code == 2
+
+
+# --- cs32 (RFSoC int32) + multi-file ingestion ---------------------------
+
+def test_ingest_cs32_is_normalised(storage_client: StorageClient, tmp_path) -> None:
+    # int32 interleaved I,Q -> normalised by 2**31.
+    raw = np.array([2**30, -(2**31), 0, 2**31 - 1], dtype="<i4")  # 2 complex
+    path = tmp_path / "rfsoc.bin"
+    path.write_bytes(raw.tobytes())
+
+    result = ingest_file(
+        file_path=str(path), signal_type="iridium", sample_rate=400e3,
+        center_freq=1626.271e6, datatype="cs32", hardware="rfsoc",
+        storage_client=storage_client,
+    )
+
+    assert result.sample_count == 2
+    content = CaptureReader(storage_client).read(result.data_key)
+    assert content.samples[0].real == pytest.approx(0.5)    # 2**30 / 2**31
+    assert content.samples[0].imag == pytest.approx(-1.0)   # -2**31 / 2**31
+
+
+def test_ingest_files_concatenates_in_order(storage_client: StorageClient, tmp_path) -> None:
+    a = np.arange(50, dtype=np.complex64)
+    b = np.arange(50, 90, dtype=np.complex64)
+    (tmp_path / "a.bin").write_bytes(a.tobytes())
+    (tmp_path / "b.bin").write_bytes(b.tobytes())
+
+    result = ingest_files(
+        file_paths=[str(tmp_path / "a.bin"), str(tmp_path / "b.bin")],
+        signal_type="iridium", sample_rate=400e3, center_freq=1626e6,
+        storage_client=storage_client,
+    )
+
+    content = CaptureReader(storage_client).read(result.data_key)
+    np.testing.assert_array_equal(content.samples, np.concatenate([a, b]))
+
+
+def test_resolve_files_sorts_packets_numerically(tmp_path) -> None:
+    for n in (1, 2, 10):  # lexical sort would wrongly put pkt_10 before pkt_2
+        (tmp_path / f"pkt_{n}.bin").write_bytes(b"x" * 8)
+    files = _resolve_files(str(tmp_path), "pkt_*.bin")
+    assert [os.path.basename(f) for f in files] == ["pkt_1.bin", "pkt_2.bin", "pkt_10.bin"]
+
+
+def test_ingest_cli_directory_of_packets(
+    storage_client: StorageClient, tmp_path, capsys
+) -> None:
+    for n in (1, 2, 3):
+        (tmp_path / f"pkt_{n}.bin").write_bytes(np.zeros(10, dtype=np.complex64).tobytes())
+    code = main(
+        [str(tmp_path), "--glob", "pkt_*.bin", "--signal-type", "iridium",
+         "--sample-rate", "400e3", "--center-freq", "1626.271e6",
+         "--datatype", "cf32", "--hardware", "rfsoc"],
+        storage_client=storage_client,
+    )
+    assert code == 0
+    assert "ingested" in capsys.readouterr().out.lower()

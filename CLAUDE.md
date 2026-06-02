@@ -71,9 +71,10 @@ a "curated" capture. Four packages under `src/aerolake/`:
   (streaming upload, ADR-010) and `download_range` (partial reads, ADR-009)).
 - **`producer/`** — `synthetic.py` generates IQ samples (`generate_tone`), `sigmf_writer.py`
   encodes them to SigMF bytes (`encode`), `orchestrator.py` (`capture_and_upload`) ties
-  generate → encode → upload together. `ingest.py` (`ingest_file`, `aerolake-ingest`) is the
-  **real-data** entry point: take an existing IQ file (cf32/cu8/cs16 → normalised cf32), write
-  the `.sigmf-meta`, and stream the data into MinIO via `upload_multipart` (ADR-010).
+  generate → encode → upload together. `ingest.py` (`ingest_file`/`ingest_files`,
+  `aerolake-ingest`) is the **real-data** entry point: take an existing IQ file **or a directory
+  of packet files** (RFSoC `RX0_pkt_*.bin`, concatenated in numeric order; `cf32/cu8/cs16/cs32`
+  → normalised cf32), write the `.sigmf-meta`, and stream into MinIO via `upload_multipart`.
 - **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, `read_segment()`
   for **partial/seeked reads** (HTTP Range — fetch only a `start_s`/`duration_s` window, ADR-009),
   plus `validate()` which runs the quality layer and promotes the capture's quality tag. `player.py`

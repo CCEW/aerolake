@@ -25,7 +25,9 @@ Usage
 from __future__ import annotations
 
 import argparse
+import glob
 import os
+import re
 import sys
 
 from rich.console import Console
@@ -33,7 +35,22 @@ from rich.table import Table
 
 from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageClient, StorageError
-from aerolake.producer.ingest import IngestResult, ingest_file
+from aerolake.producer.ingest import IngestResult, ingest_files
+
+
+def _natural_key(path: str) -> tuple[int, str]:
+    """Sort key from the last integer in a filename (RX0_pkt_2 before _10)."""
+    nums = re.findall(r"\d+", os.path.basename(path))
+    return (int(nums[-1]) if nums else -1, path)
+
+
+def _resolve_files(path: str, glob_pat: str) -> list[str]:
+    """Return the list of files to ingest: one file, or a sorted directory."""
+    if os.path.isdir(path):
+        return sorted(glob.glob(os.path.join(path, glob_pat)), key=_natural_key)
+    if os.path.isfile(path):
+        return [path]
+    return []
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -41,7 +58,16 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="aerolake-ingest",
         description="Ingest an existing IQ file into MinIO as a SigMF capture.",
     )
-    parser.add_argument("file", help="Path to the raw IQ file to ingest.")
+    parser.add_argument(
+        "path",
+        help="A raw IQ file, OR a directory of packet files (concatenated in "
+        "numeric order; select them with --glob).",
+    )
+    parser.add_argument(
+        "--glob",
+        default="*.bin",
+        help="When path is a directory, which files to ingest (default '*.bin').",
+    )
     parser.add_argument(
         "--signal-type", required=True, help="Signal type / prefix (e.g. gnss_l1)."
     )
@@ -53,12 +79,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--datatype",
-        choices=["cf32", "cu8", "cs16"],
+        choices=["cf32", "cu8", "cs16", "cs32"],
         default="cf32",
-        help="Source datatype (default cf32; cu8/cs16 are converted to cf32).",
+        help="Source datatype (default cf32; cu8/cs16/cs32 are converted to cf32).",
     )
     parser.add_argument(
-        "--hardware", default="unknown", help="Hardware tag (e.g. bladerf, rtlsdr)."
+        "--hardware", default="unknown", help="Hardware tag (e.g. bladerf, rfsoc)."
     )
     return parser
 
@@ -69,20 +95,22 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
     configure_logging()
     console = Console()
 
-    # Validate the input file exists before touching storage.
-    if not os.path.isfile(args.file):
-        console.print(f"[bold red]✗ File not found:[/] {args.file}")
+    # Resolve the input (a single file, or a sorted directory of packets).
+    files = _resolve_files(args.path, args.glob)
+    if not files:
+        console.print(f"[bold red]✗ No file(s) found at:[/] {args.path}")
         return 2
 
+    what = files[0] if len(files) == 1 else f"{len(files)} files in {args.path}"
     console.print(
-        f"[bold cyan]>[/] Ingesting [bold]{args.file}[/] as "
+        f"[bold cyan]>[/] Ingesting [bold]{what}[/] as "
         f"[bold]{args.signal_type}[/] ({args.datatype}, "
         f"{args.sample_rate / 1e6:.3f} MS/s @ {args.center_freq / 1e6:.3f} MHz)…"
     )
 
     try:
-        result: IngestResult = ingest_file(
-            file_path=args.file,
+        result: IngestResult = ingest_files(
+            file_paths=files,
             signal_type=args.signal_type,
             sample_rate=args.sample_rate,
             center_freq=args.center_freq,

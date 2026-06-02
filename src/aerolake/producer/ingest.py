@@ -28,6 +28,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 import structlog
@@ -44,6 +45,7 @@ _SOURCE_DTYPES: dict[str, tuple[np.dtype, int]] = {
     "cf32": (np.dtype("<c8"), 8),   # complex float32 LE — already our target
     "cu8": (np.dtype("u1"), 2),     # unsigned 8-bit (RTL-SDR), I,Q interleaved
     "cs16": (np.dtype("<i2"), 4),   # signed 16-bit LE, I,Q interleaved
+    "cs32": (np.dtype("<i4"), 8),   # signed 32-bit LE (e.g. RFSoC), I,Q interleaved
 }
 
 # cf32 datatype string we store everywhere (SigMF spec).
@@ -82,21 +84,43 @@ def _iter_cf32_chunks(
                 # Already complex float32 LE — nothing to convert.
                 yield raw
                 continue
-            # cu8 / cs16: interleaved scalars -> normalised complex64.
+            # Integer types: interleaved scalars -> normalised complex64 [-1, 1).
             scalars = np.frombuffer(raw, dtype=src_dtype)
             if datatype == "cu8":
                 # 0..255, midpoint 127.5 -> map to roughly [-1, 1].
                 floats = (scalars.astype(np.float32) - 127.5) / 127.5
-            else:  # cs16
-                # -32768..32767 -> [-1, 1).
-                floats = scalars.astype(np.float32) / 32768.0
+            elif datatype == "cs16":
+                floats = scalars.astype(np.float32) / 32768.0       # 2**15
+            else:  # cs32
+                floats = scalars.astype(np.float32) / 2147483648.0  # 2**31
             iq = (floats[0::2] + 1j * floats[1::2]).astype(np.complex64)
             yield iq.tobytes()
+
+
+def _iter_cf32_files(
+    file_paths: list[str], datatype: str, chunk_samples: int
+) -> Iterator[bytes]:
+    """Stream several files in order as one continuous cf32 byte stream.
+
+    Used to ingest a capture split into many packet files (e.g. the RFSoC's
+    ``RX0_pkt_*.bin``): concatenated in the given order, they form one recording.
+    """
+    for path in file_paths:
+        yield from _iter_cf32_chunks(path, datatype, chunk_samples)
 
 
 def ingest_file(
     *,
     file_path: str,
+    **kwargs: Any,
+) -> IngestResult:
+    """Ingest a single raw IQ file (thin wrapper over :func:`ingest_files`)."""
+    return ingest_files(file_paths=[file_path], **kwargs)
+
+
+def ingest_files(
+    *,
+    file_paths: list[str],
     signal_type: str,
     sample_rate: float,
     center_freq: float,
@@ -107,21 +131,26 @@ def ingest_file(
     storage_client: StorageClient | None = None,
     chunk_samples: int = 1_000_000,
 ) -> IngestResult:
-    """Ingest a raw IQ file into MinIO as a SigMF capture.
+    """Ingest one or more raw IQ files into MinIO as a single SigMF capture.
+
+    Several files are concatenated **in the given order** into one continuous
+    recording — the way the RFSoC packet dumps (``RX0_pkt_*.bin``) form one
+    capture. The data is streamed via multipart upload, so total size is not
+    bounded by RAM.
 
     Parameters
     ----------
-    file_path
-        Path to the raw IQ file on disk.
+    file_paths
+        Ordered list of raw IQ files (a single-element list for one file).
     signal_type
         Bucket prefix / tag (e.g. ``gnss_l1``, ``iridium``).
     sample_rate, center_freq
         Acquisition parameters (Hz) — go into the SigMF metadata.
     datatype
-        Source datatype: ``cf32`` (default), ``cu8`` or ``cs16``. Anything but
-        cf32 is converted to normalised cf32 on the way in.
+        Source datatype: ``cf32`` (default), ``cu8``, ``cs16`` or ``cs32``.
+        Anything but cf32 is converted to normalised cf32 on the way in.
     hardware
-        Goes into the ``hardware`` tag + SigMF ``core:hw`` (e.g. ``bladerf``).
+        Goes into the ``hardware`` tag + SigMF ``core:hw`` (e.g. ``rfsoc``).
     storage_client
         Injected for tests; defaults to a fresh client.
     chunk_samples
@@ -132,14 +161,15 @@ def ingest_file(
             f"Unsupported source datatype {datatype!r}. "
             f"Supported: {sorted(_SOURCE_DTYPES)}"
         )
+    if not file_paths:
+        raise ValueError("ingest_files: file_paths is empty")
 
     client = storage_client or StorageClient()
     _, bytes_per_sample = _SOURCE_DTYPES[datatype]
 
-    # Total complex samples = file size / bytes-per-sample. (A cf32 file of
-    # 8 MB holds 1M samples; a cu8 file of 2 MB also holds 1M samples.)
-    file_size = os.path.getsize(file_path)
-    sample_count = file_size // bytes_per_sample
+    # Total complex samples = sum of file sizes / bytes-per-sample.
+    total_size = sum(os.path.getsize(p) for p in file_paths)
+    sample_count = total_size // bytes_per_sample
 
     # --- Key layout (identical to the synthetic producer, ADR-003) --------
     session_id = uuid.uuid4().hex[:8]
@@ -149,13 +179,13 @@ def ingest_file(
     meta_key = f"{base_key}.sigmf-meta"
 
     log = logger.bind(
-        file_path=file_path,
+        n_files=len(file_paths),
         signal_type=signal_type,
         session_id=session_id,
         datatype=datatype,
         sample_count=sample_count,
     )
-    log.info("ingest.start", file_size=file_size)
+    log.info("ingest.start", total_size=total_size)
 
     # --- Build + validate the SigMF metadata (always cf32_le on our side) --
     if description is None:
@@ -206,7 +236,7 @@ def ingest_file(
     }
     data_bytes_uploaded = client.upload_multipart(
         data_key,
-        _iter_cf32_chunks(file_path, datatype, chunk_samples),
+        _iter_cf32_files(file_paths, datatype, chunk_samples),
         content_type="application/octet-stream",
         metadata=data_metadata,
         tags=data_tags,
