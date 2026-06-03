@@ -101,7 +101,10 @@ a "curated" capture. Four packages under `src/aerolake/`:
   `tables.py` = pure loader (`load_table`/`list_datasets`, kind detection) + per-modality Plotly
   figures (`figures_for`, tested); `app.py` = Streamlit app `aerolake-analysis` (pick file → run →
   type-aware plots: GPS **OpenStreetMap map** (`go.Scattermap`, no token) + X/Y track + altitude,
-  IMU orientation/accel/gyro, Iridium SNR/frequency).
+  IMU orientation/accel/gyro, Iridium SNR/frequency). `doppler.py` is a Plotly port of the lab's
+  Iridium Doppler script (pure: parse a decoded acquisition TSV/`IRA:` log + a TLE → **measured vs
+  TLE-predicted Doppler S-curves** and a **skyplot** az/el, via Skyfield/SGP4); the `aerolake-analysis`
+  app has a second mode "🛰️ Doppler / Skyplot" with a time cursor you can animate (`st.fragment`).
 
 `scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `ingest.py`, `validate.py`,
 `catalog.py`, `play.py`, `stream.py`, `subscribe.py`, `fetch.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /

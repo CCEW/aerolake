@@ -46,6 +46,9 @@ dev = [
     # loader (aerolake.analysis.iridium) is testable in CI.
     "plotly>=5.24.0",
     "h5py>=3.10.0",
+    # skyfield (+sgp4) powers the Iridium Doppler/skyplot TLE prediction
+    # (aerolake.analysis.doppler); in dev so it's testable in CI offline.
+    "skyfield>=1.49",
 ]
 
 # Optional GUI runtime. Install with `uv sync --group gui`; run the app with
@@ -55,6 +58,7 @@ gui = [
     "streamlit>=1.40.0",
     "plotly>=5.24.0",
     "h5py>=3.10.0",
+    "skyfield>=1.49",
 ]
 
 [build-system]
@@ -89,5 +93,5 @@ plugins = ["pydantic.mypy"]
 # Third-party libraries that ship no type stubs / py.typed marker. Without this
 # mypy emits "missing library stubs" errors for imports we don't control.
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "sigmf.*", "streamlit.*", "plotly.*", "h5py.*"]
+module = ["boto3.*", "botocore.*", "sigmf.*", "streamlit.*", "plotly.*", "h5py.*", "skyfield.*"]
 ignore_missing_imports = true
