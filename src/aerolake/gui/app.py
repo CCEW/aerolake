@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import time
 
 import numpy as np
 import streamlit as st
@@ -374,7 +373,6 @@ def _run() -> None:
     st.sidebar.header("Parameters")
     # FFT size trades frequency resolution (larger) vs smoothness/speed.
     nperseg = st.sidebar.select_slider("FFT size", options=[256, 512, 1024, 2048, 4096], value=1024)
-    max_points = st.sidebar.slider("Constellation points", 1000, 20000, value=5000, step=1000)
 
     # --- Cheap overview (no samples loaded): duration, metrics, tags ------
     sample_rate, total_samples, center_freq, tags = _capture_overview(data_key)
@@ -470,72 +468,84 @@ def _run() -> None:
     )
     max_start = max(0.0, round(total_duration - window_s, 1))
 
-    # --- ▶ Animated playback ----------------------------------------------
-    # "Animated playback" auto-advances the time window so the spectrum and
-    # spectrogram scroll through the whole capture, like a moving playhead.
-    # Streamlit has no real event loop, so we fake it: hold the playhead in
-    # session_state, render the window, then (if playing) bump the playhead and
-    # ask Streamlit to re-run after a short pause (see the bottom of this file).
+    # --- ▶ Animated playback (smooth) -------------------------------------
+    # The playhead position lives in session_state. While "playing", the window
+    # is rendered inside an ``st.fragment`` that reruns *on its own* every tick —
+    # only the plots re-execute, NOT the whole page, so there's no full-page
+    # flicker (that was the "saccadé/séquencé" feel). Successive windows overlap
+    # by half a window, so the spectrogram appears to *scroll* rather than jump.
     if "play_pos" not in st.session_state:
         st.session_state.play_pos = 0.0
+    # The window length may have changed since last run — keep the playhead valid.
+    st.session_state.play_pos = min(st.session_state.play_pos, max_start)
+
     playing = st.sidebar.toggle(
         "▶ Animated playback",
         value=False,
-        help="Auto-advance the window through the whole capture (a moving playhead).",
+        help="Auto-scroll the window through the whole capture (only the plots refresh).",
     )
-    # The slider is keyless and takes its value FROM the playhead, so the
-    # auto-advance can move it; dragging it by hand updates the playhead too.
-    pos0 = min(st.session_state.play_pos, max_start)
-    start_s = (
-        st.sidebar.slider("Start (s)", 0.0, max_start, value=pos0, step=0.5)
-        if max_start > 0
-        else 0.0
-    )
-    st.session_state.play_pos = start_s
-    samples, _sigmf_meta, _tags, _metadata = _load_segment(data_key, start_s, window_s)
-
-    summary = plots.describe_signal(samples, sample_rate, center_freq)
-    st.markdown(
-        f"<div class='aerolake-summary'>📡 {summary} &nbsp;"
-        f"(window {start_s:.1f}-{start_s + window_s:.1f}s)</div>",
-        unsafe_allow_html=True,
-    )
-    st.write("")
-
-    tab_spectrum, tab_spectrogram, tab_constellation = st.tabs(
-        ["📈 Spectrum", "🌈 Spectrogram", "✴️ Constellation"]
-    )
-    with tab_spectrum:
-        if explain:
-            _explain_box("spectrum")
-        st.plotly_chart(
-            plots.spectrum_figure(samples, sample_rate, center_freq, nperseg=nperseg),
-            use_container_width=True,
+    refresh: float | None
+    if playing:
+        # While playing we drive the position automatically; a manual slider
+        # would fight the auto-advance, so we just show the live position.
+        st.sidebar.caption("▶ Playing… (the playhead advances on its own)")
+        refresh = 0.25  # fragment rerun period in seconds (~4 fps)
+    else:
+        # Stopped: let the user scrub freely. The slider seeds the playhead.
+        st.session_state.play_pos = (
+            st.sidebar.slider(
+                "Start (s)", 0.0, max_start, value=st.session_state.play_pos, step=0.5
+            )
+            if max_start > 0
+            else 0.0
         )
-    with tab_spectrogram:
-        if explain:
-            _explain_box("spectrogram")
-        st.plotly_chart(
-            plots.spectrogram_figure(samples, sample_rate, center_freq),
-            use_container_width=True,
-        )
-    with tab_constellation:
-        if explain:
-            _explain_box("constellation")
-        st.plotly_chart(
-            plots.constellation_figure(samples, max_points=max_points),
-            use_container_width=True,
-        )
+        refresh = None  # no auto-rerun when stopped
 
-    # --- ▶ Animated playback: advance the playhead and re-run -------------
-    # Done LAST, after the figures are drawn: move the window forward by one
-    # window-length, wrap to 0 at the end (so it loops), pause briefly, then
-    # re-run. The cached Range reads make each step cheap.
-    if playing and max_start > 0:
-        nxt = start_s + window_s
-        st.session_state.play_pos = 0.0 if nxt > max_start else round(nxt, 1)
-        time.sleep(0.6)
-        st.rerun()
+    # Overlap successive windows by ~50 % so the waterfall scrolls smoothly.
+    step = max(0.25, round(window_s / 2, 2))
+
+    @st.fragment(run_every=refresh)
+    def _window_view() -> None:
+        """Render the current window; if playing, advance the playhead.
+
+        This whole function is an ``st.fragment``: when ``run_every`` is set it
+        re-runs in isolation (the sidebar/header don't flicker), which is what
+        makes the playback feel continuous.
+        """
+        pos = min(st.session_state.play_pos, max_start)
+        samples, _meta, _tags, _md = _load_segment(data_key, pos, window_s)
+
+        summary = plots.describe_signal(samples, sample_rate, center_freq)
+        st.markdown(
+            f"<div class='aerolake-summary'>📡 {summary} &nbsp;"
+            f"(window {pos:.1f}-{pos + window_s:.1f}s)</div>",
+            unsafe_allow_html=True,
+        )
+        st.write("")
+
+        # Spectrogram first: it's the view you watch scroll during playback.
+        tab_sg, tab_sp = st.tabs(["🌈 Spectrogram", "📈 Spectrum"])
+        with tab_sg:
+            if explain:
+                _explain_box("spectrogram")
+            st.plotly_chart(
+                plots.spectrogram_figure(samples, sample_rate, center_freq),
+                use_container_width=True,
+            )
+        with tab_sp:
+            if explain:
+                _explain_box("spectrum")
+            st.plotly_chart(
+                plots.spectrum_figure(samples, sample_rate, center_freq, nperseg=nperseg),
+                use_container_width=True,
+            )
+
+        # Advance the playhead AFTER drawing; wrap to 0 at the end (loop).
+        if playing and max_start > 0:
+            nxt = pos + step
+            st.session_state.play_pos = 0.0 if nxt > max_start else round(nxt, 2)
+
+    _window_view()
 
 
 # Streamlit executes the module top-level on each run, so we just call _run().
