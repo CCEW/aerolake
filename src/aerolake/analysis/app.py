@@ -35,16 +35,23 @@ def _load(path: str, dataset: str) -> tables.AnalysisTable:
 
 
 @st.cache_data(show_spinner="Parsing acquisition…")
-def _parse_acq(acq_path: str, satmap_path: str) -> dict:
+def _parse_acq(acq_path: str, satmap_path: str, utc_offset_h: float) -> dict:
     """Parse measured Doppler (+ optional satmap for names). Cached per paths."""
     satmap = doppler.parse_satmap(doppler.read_text_lines(satmap_path)) if satmap_path else {}
-    return doppler.parse_measured(doppler.read_text_lines(acq_path), satmap)
+    return doppler.parse_measured(
+        doppler.read_text_lines(acq_path), satmap, utc_offset_h=utc_offset_h
+    )
 
 
 @st.cache_data(show_spinner="Propagating TLE (Skyfield)…")
 def _predict(
-    tle_path: str, lat: float, lon: float, alt: float,
-    t0_iso: str, t1_iso: str, wanted: tuple[str, ...],
+    tle_path: str,
+    lat: float,
+    lon: float,
+    alt: float,
+    t0_iso: str,
+    t1_iso: str,
+    wanted: tuple[str, ...],
 ) -> dict:
     """Predict Doppler/sky-track for the satellites seen in the acquisition."""
     sats = doppler.load_tles(doppler.read_text_lines(tle_path))
@@ -74,6 +81,7 @@ def _pick_file(sb, label: str, found: list[str], *, optional: bool = False, gues
 # Mode: Doppler / Skyplot
 # ---------------------------------------------------------------------------
 
+
 def _doppler_view() -> None:
     sb = st.sidebar
     sb.header("Doppler source")
@@ -87,6 +95,10 @@ def _doppler_view() -> None:
     lat = sb.number_input("Latitude", value=45.49476, format="%.5f")
     lon = sb.number_input("Longitude", value=-73.56304, format="%.5f")
     alt = sb.number_input("Altitude (m)", value=30.0, step=1.0)
+    # GR-Iridium 'IRA:' timestamps are already UTC → 0. Only change if a capture
+    # stored local time (the lab's original script assumed -4 for EDT).
+    utc_off = sb.number_input("IRA: UTC offset (h)", value=0.0, step=1.0)
+    max_sats = sb.slider("Max satellites (by # measurements)", 1, 20, value=6)
 
     if not acq:
         st.info(
@@ -97,10 +109,15 @@ def _doppler_view() -> None:
         st.stop()
 
     try:
-        measured = _parse_acq(acq, satmap)
+        measured = _parse_acq(acq, satmap, utc_off)
     except (OSError, ValueError) as exc:
         st.error(f"Cannot parse {acq!r}: {exc}")
         st.stop()
+
+    # Keep the N most-measured satellites so the plot stays readable.
+    if len(measured) > max_sats:
+        keep = sorted(measured, key=lambda k: -len(measured[k]["times"]))[:max_sats]
+        measured = {k: measured[k] for k in keep}
 
     span = doppler.measured_time_span(measured)
     if not measured or span is None:
@@ -119,10 +136,15 @@ def _doppler_view() -> None:
     # TLE prediction (optional but needed for the predicted curve + skyplot).
     predicted: dict = {}
     if tle:
-        wanted = tuple(sorted({lbl.replace("IRA_", "").replace("_", " ").upper() for lbl in measured}))
+        wanted = tuple(
+            sorted({lbl.replace("IRA_", "").replace("_", " ").upper() for lbl in measured})
+        )
         try:
             predicted = _predict(
-                tle, float(lat), float(lon), float(alt),
+                tle,
+                float(lat),
+                float(lon),
+                float(alt),
                 (start - timedelta(seconds=30)).isoformat(),
                 (end + timedelta(seconds=30)).isoformat(),
                 wanted,
@@ -148,8 +170,11 @@ def _doppler_view() -> None:
     else:
         st.session_state.dop_pos = (
             sb.slider(
-                "Time cursor (s from start)", 0.0, total_s,
-                value=st.session_state.dop_pos, step=max(1.0, round(total_s / 200, 1)),
+                "Time cursor (s from start)",
+                0.0,
+                total_s,
+                value=st.session_state.dop_pos,
+                step=max(1.0, round(total_s / 200, 1)),
             )
             if total_s > 0
             else 0.0
@@ -184,6 +209,7 @@ def _doppler_view() -> None:
 # ---------------------------------------------------------------------------
 # Mode: HDF5 tables (original viewer)
 # ---------------------------------------------------------------------------
+
 
 def _tables_view() -> None:
     sb = st.sidebar

@@ -95,11 +95,20 @@ def _is_tsv(lines: list[str]) -> bool:
     return False
 
 
-def parse_measured(lines: list[str], satmap: dict[str, str] | None = None) -> dict[str, Track]:
+def parse_measured(
+    lines: list[str],
+    satmap: dict[str, str] | None = None,
+    utc_offset_h: float = 0.0,
+) -> dict[str, Track]:
     """Parse measured Doppler per satellite. Auto-detects TSV vs IRA: log.
 
     Returns ``{label: {"times": [datetime UTC], "doppler": [Hz], "sid": "NNN"}}``.
     Doppler is ``measured_freq - FC_HZ`` (so 0 Hz = on the nominal carrier).
+
+    ``utc_offset_h`` shifts the IRA: log timestamps (the ``p-<epoch>`` field).
+    GR-Iridium's epoch is already UTC, so the default is 0; expose it only if a
+    particular capture stored *local* time (the lab's original script used -4).
+    The TSV branch ignores it (those timestamps are unambiguous UTC epochs).
     """
     data: dict[str, Track] = {}
 
@@ -154,7 +163,7 @@ def parse_measured(lines: list[str], satmap: dict[str, str] | None = None) -> di
             t_utc = (
                 datetime.fromtimestamp(ts, tz=UTC)
                 + timedelta(milliseconds=off_ms)
-                + timedelta(hours=UTC_OFFSET_H)
+                + timedelta(hours=utc_offset_h)
             )
             e = data.setdefault(label, {"times": [], "doppler": [], "sid": sid})
             e["times"].append(t_utc)
