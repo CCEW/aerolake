@@ -79,10 +79,11 @@ aerolake-play (scripts/play.py)
 
 ### G. Diffuser sur le réseau (ZeroMQ Pub/Sub, ADR-008)
 ```
-aerolake-stream (scripts/stream.py)
+aerolake-stream (scripts/stream.py)                  # ÉMETTEUR
   └─ player.play(on_frame = consumer/stream.py:FramePublisher.publish)
        └─ encode_frame() → socket ZMQ PUB           # [topic, header JSON, octets IQ]
-   (un FrameSubscriber sur un autre appareil → recv() → decode_frame())
+aerolake-subscribe (scripts/subscribe.py)            # ABONNÉ (autre appareil)
+  └─ consumer/stream.py:FrameSubscriber.recv() → decode_frame()  # connect tcp://<IP>:5555
 ```
 
 ### H. Visualiser une capture IQ (IHM, ADR-006)
@@ -140,7 +141,8 @@ gnuradio/transmit_sdr.grc : File Source → multiply_const (tx_amplitude) → So
 | `gui/app.py` | IHM Streamlit (glue) | reader, plots, theme |
 | `analysis/tables.py` | charge/trace les `.h5` décodés | h5py, plotly |
 | `scripts/fetch.py` | **aerolake-fetch** : MinIO → fichier `.sigmf-data` local (pont GNU Radio) | reader, storage |
-| `scripts/*` | les 9 CLI (argparse + rich, exit codes 0/1/2) | les modules ci-dessus |
+| `scripts/subscribe.py` | **aerolake-subscribe** : reçoit le flux ZeroMQ (abonné, autre appareil) | consumer/stream |
+| `scripts/*` | les 10 CLI (argparse + rich, exit codes 0/1/2) | les modules ci-dessus |
 
 ## 4. Les 5 patterns transverses (à citer à l'oral)
 

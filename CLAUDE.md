@@ -31,6 +31,7 @@ uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: pr
 uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
 uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # partial read: t=200s, 10s (HTTP Range)
 uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over ZeroMQ Pub/Sub
+uv run aerolake-subscribe --address tcp://localhost:5555   # subscribe to a ZeroMQ stream (the receiving half, any device)
 uv run aerolake-fetch --key gnss_l1/…/capture.sigmf-data --out /tmp/capture.sigmf-data   # MinIO→local cf32 file bridge for GNU Radio (ADR-012)
 
 # Visualization GUI (Streamlit + Plotly; optional `gui` dependency group)
@@ -103,7 +104,7 @@ a "curated" capture. Four packages under `src/aerolake/`:
   IMU orientation/accel/gyro, Iridium SNR/frequency).
 
 `scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `ingest.py`, `validate.py`,
-`catalog.py`, `play.py`, `stream.py`, `fetch.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
+`catalog.py`, `play.py`, `stream.py`, `subscribe.py`, `fetch.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
 2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
 structlog logs go to stderr, keeping stdout clean for results (`--json`, tables). `fetch.py`
 (`aerolake-fetch`, ADR-012) is the **MinIO→local-file bridge** for GNU Radio: it reads a capture

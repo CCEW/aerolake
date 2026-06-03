@@ -88,8 +88,11 @@ La barre latérale expose désormais **tout le workflow** — pratique pour une 
 ```bash
 uv run aerolake-play --prefix iridium/                       # toute la durée, à la cadence réelle
 uv run aerolake-play --prefix iridium/ --start 200 --duration 30   # à partir de t=200s, 30s
-uv run aerolake-stream --prefix iridium/                     # diffuse sur ZeroMQ
+uv run aerolake-stream --prefix iridium/                     # diffuse sur ZeroMQ (émetteur)
+uv run aerolake-subscribe --address tcp://localhost:5555     # reçoit le flux (abonné)
 ```
+*(L'abonné peut tourner sur **un autre appareil** : `--address tcp://<IP-du-PC>:5555`.
+Lance l'abonné **avant/pendant** l'émetteur — ZeroMQ « slow joiner ».)*
 
 ## 5. Ré-émettre la capture en VRAIE RF (BladeRF, ADR-012)
 
@@ -128,7 +131,8 @@ Dans `transmit_sdr.grc` : `sdr_driver="bladerf"`, `tx_amplitude` (0..1, défaut 
 | Valider la qualité | `uv run aerolake-validate --prefix iridium/ --expected-duration <s>` |
 | **IHM** (visualiser) | `uv run --group gui aerolake-gui` → http://localhost:8501 |
 | Playback (cadence réelle) | `uv run aerolake-play --prefix iridium/` |
-| Streaming ZeroMQ | `uv run aerolake-stream --prefix iridium/` |
+| Streaming ZeroMQ (émettre) | `uv run aerolake-stream --prefix iridium/` |
+| **S'abonner** au flux ZeroMQ (recevoir) | `uv run aerolake-subscribe --address tcp://<IP>:5555 [--topic iridium --frames 10]` |
 | **Exporter** vers un fichier (pont GNU Radio) | `uv run aerolake-fetch --key <key> --out /tmp/capture.sigmf-data [--start 100 --duration 30]` |
 | **Ré-émettre en RF** (BladeRF) | `grcc -o /tmp gnuradio/transmit_sdr.grc` puis `gnuradio-companion gnuradio/transmit_sdr.grc` |
 | Viewer .h5 (GPS/IMU/Iridium décodé) | `uv run --group gui aerolake-analysis` |
