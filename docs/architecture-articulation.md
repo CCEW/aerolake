@@ -106,8 +106,19 @@ aerolake-analysis (analysis/launch.py → analysis/app.py)
 ```
 gnuradio/record_sdr.grc : Soapy Source (RFSoC/BladeRF/RTL-SDR) → File Sink (.sigmf-data)
         →  aerolake-ingest  (le pont = le fichier cf32)
-gnuradio/playback.grc   : File Source (.sigmf-data) → Throttle → spectre/waterfall (→ SDR Sink = TX réel)
+gnuradio/playback.grc   : File Source (.sigmf-data) → Throttle → spectre/waterfall (logiciel)
 ```
+
+### K. Ré-émettre en VRAIE RF (matériel, ADR-012 — couche 3)
+```
+aerolake-fetch (scripts/fetch.py)                 # le PONT MinIO → fichier local
+  └─ consumer/reader.py : read() | read_segment() # toute la capture, ou une fenêtre (Range)
+       └─ écrit /tmp/capture.sigmf-data (cf32_le) + .sigmf-meta  + imprime samp_rate/freq
+gnuradio/transmit_sdr.grc : File Source → multiply_const (tx_amplitude) → Soapy Sink (BladeRF, "TX")
+  (pas de Throttle : l'horloge du SDR cadence) → ré-émission RF réelle
+```
+⚠️ Émettre sur GNSS/Iridium en l'air = illégal et brouille de vrais récepteurs :
+**câble blindé + atténuateur / charge fictive / cage de Faraday** uniquement.
 
 ## 3. Carte des modules
 
@@ -128,7 +139,8 @@ gnuradio/playback.grc   : File Source (.sigmf-data) → Throttle → spectre/wat
 | `gui/plots.py` | DSP pur → figures Plotly | numpy, plotly |
 | `gui/app.py` | IHM Streamlit (glue) | reader, plots, theme |
 | `analysis/tables.py` | charge/trace les `.h5` décodés | h5py, plotly |
-| `scripts/*` | les 8 CLI (argparse + rich, exit codes 0/1/2) | les modules ci-dessus |
+| `scripts/fetch.py` | **aerolake-fetch** : MinIO → fichier `.sigmf-data` local (pont GNU Radio) | reader, storage |
+| `scripts/*` | les 9 CLI (argparse + rich, exit codes 0/1/2) | les modules ci-dessus |
 
 ## 4. Les 5 patterns transverses (à citer à l'oral)
 

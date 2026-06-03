@@ -28,6 +28,7 @@ aerolake-validate = "aerolake.scripts.validate:main"
 aerolake-list = "aerolake.scripts.catalog:main"
 aerolake-play = "aerolake.scripts.play:main"
 aerolake-stream = "aerolake.scripts.stream:main"
+aerolake-fetch = "aerolake.scripts.fetch:main"
 aerolake-gui = "aerolake.gui.launch:main"
 aerolake-analysis = "aerolake.analysis.launch:main"
 

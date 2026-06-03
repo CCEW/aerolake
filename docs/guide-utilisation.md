@@ -91,6 +91,32 @@ uv run aerolake-play --prefix iridium/ --start 200 --duration 30   # à partir d
 uv run aerolake-stream --prefix iridium/                     # diffuse sur ZeroMQ
 ```
 
+## 5. Ré-émettre la capture en VRAIE RF (BladeRF, ADR-012)
+
+C'est la couche matérielle : renvoyer le signal **physiquement** par un SDR pour
+qu'un vrai récepteur le capte. Il faut une **BladeRF** (la RTL-SDR est réception
+seule) et **GNU Radio système** (`sudo apt install gnuradio`).
+
+> ⚠️ **Légal & sécurité** : émettre sur GNSS (1575.42 MHz) ou Iridium (~1626 MHz)
+> **en l'air est illégal et brouille des récepteurs critiques**. Branche toujours
+> par **câble blindé + atténuateur**, **charge fictive** ou **cage de Faraday**.
+
+```bash
+# 1) Récupérer la capture (ou une fenêtre) de MinIO vers un fichier local :
+uv run aerolake-fetch --key iridium/2026-06-02/<id>/capture.sigmf-data \
+    --out /tmp/capture.sigmf-data --start 100 --duration 30
+#    → imprime samp_rate (ex. 400000) et freq (ex. 1626271000) à recopier.
+
+# 2) Valider le flowgraph d'émission (sans matériel) :
+grcc -o /tmp gnuradio/transmit_sdr.grc
+
+# 3) L'ouvrir, régler capture_file / samp_rate / freq / tx_gain, puis lancer :
+gnuradio-companion gnuradio/transmit_sdr.grc
+```
+Dans `transmit_sdr.grc` : `sdr_driver="bladerf"`, `tx_amplitude` (0..1, défaut 0.8)
+= marge numérique avant le DAC, `tx_gain` = gain analogique (**commence bas**),
+`repeat` = boucler ou émettre une fois. Un afficheur de spectre montre ce que tu émets.
+
 ## Aide-mémoire (toutes les commandes)
 
 | Action | Commande |
@@ -103,6 +129,8 @@ uv run aerolake-stream --prefix iridium/                     # diffuse sur ZeroM
 | **IHM** (visualiser) | `uv run --group gui aerolake-gui` → http://localhost:8501 |
 | Playback (cadence réelle) | `uv run aerolake-play --prefix iridium/` |
 | Streaming ZeroMQ | `uv run aerolake-stream --prefix iridium/` |
+| **Exporter** vers un fichier (pont GNU Radio) | `uv run aerolake-fetch --key <key> --out /tmp/capture.sigmf-data [--start 100 --duration 30]` |
+| **Ré-émettre en RF** (BladeRF) | `grcc -o /tmp gnuradio/transmit_sdr.grc` puis `gnuradio-companion gnuradio/transmit_sdr.grc` |
 | Viewer .h5 (GPS/IMU/Iridium décodé) | `uv run --group gui aerolake-analysis` |
 
 > Toutes les CLI ont une aide : ajoute `--help` (ex. `uv run aerolake-ingest --help`).

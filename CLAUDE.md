@@ -31,6 +31,7 @@ uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: pr
 uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
 uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # partial read: t=200s, 10s (HTTP Range)
 uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over ZeroMQ Pub/Sub
+uv run aerolake-fetch --key gnss_l1/…/capture.sigmf-data --out /tmp/capture.sigmf-data   # MinIO→local cf32 file bridge for GNU Radio (ADR-012)
 
 # Visualization GUI (Streamlit + Plotly; optional `gui` dependency group)
 uv sync --group gui                  # install the GUI runtime (streamlit + plotly)
@@ -101,20 +102,26 @@ a "curated" capture. Four packages under `src/aerolake/`:
   type-aware plots: GPS **OpenStreetMap map** (`go.Scattermap`, no token) + X/Y track + altitude,
   IMU orientation/accel/gyro, Iridium SNR/frequency).
 
-`scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `validate.py`,
-`catalog.py`, `play.py`, `stream.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
+`scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `ingest.py`, `validate.py`,
+`catalog.py`, `play.py`, `stream.py`, `fetch.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
 2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
-structlog logs go to stderr, keeping stdout clean for results (`--json`, tables).
+structlog logs go to stderr, keeping stdout clean for results (`--json`, tables). `fetch.py`
+(`aerolake-fetch`, ADR-012) is the **MinIO→local-file bridge** for GNU Radio: it reads a capture
+(whole, or a window via `read_segment`/Range) through `CaptureReader` and writes the raw `cf32_le`
+bytes + a `.sigmf-meta` sidecar to disk, printing the `samp_rate`/`freq` to paste into a flowgraph.
 
-### GNU Radio flowgraphs (`gnuradio/`, ADR-007 layer 2)
+### GNU Radio flowgraphs (`gnuradio/`, ADR-007 layer 2/3, ADR-012)
 
-`gnuradio/` holds `record.grc` / `playback.grc` — **separate from the uv project**: they need a
-system GNU Radio (`sudo apt install gnuradio`, 3.10+) and run with the *system* Python that ships
-its bindings, not `.venv`. The bridge to the rest of AeroLake is the **`.sigmf-data` file itself**:
-it is raw `cf32_le`, which GNU Radio's File Source/Sink read/write natively as *complex* — no
-SigMF block needed. Validate a `.grc` headlessly with `grcc -o /tmp gnuradio/playback.grc`; the
-generated `.py` is gitignored. Real RF transmit (playback to a receiver) needs the **BladeRF**
-(the RTL-SDR is RX-only).
+`gnuradio/` holds `record.grc` / `record_sdr.grc` / `playback.grc` / `transmit_sdr.grc` —
+**separate from the uv project**: they need a system GNU Radio (`sudo apt install gnuradio`, 3.10+)
+and run with the *system* Python that ships its bindings, not `.venv`. The bridge to the rest of
+AeroLake is the **`.sigmf-data` file itself**: it is raw `cf32_le`, which GNU Radio's File
+Source/Sink read/write natively as *complex* — no SigMF block needed. Get a capture onto local disk
+with **`aerolake-fetch`** (ADR-012). Validate a `.grc` headlessly with `grcc -o /tmp
+gnuradio/playback.grc`; the generated `.py` is gitignored. **Real RF transmit** —
+`transmit_sdr.grc` (File Source → amplitude backoff → Soapy Custom **Sink**, ADR-012) — needs the
+**BladeRF** (the RTL-SDR is RX-only). ⚠️ Emitting on GNSS/Iridium bands over the air is illegal and
+jams real receivers: use a shielded cable + attenuator / dummy load / Faraday enclosure.
 
 ### Conventions that span multiple files
 
@@ -187,6 +194,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-009 — partial/seeked reads via HTTP Range Requests (Python `read_segment` + GNU Radio offset/length)
 - ADR-010 — streaming multipart upload to bypass RAM (`StorageClient.upload_multipart`)
 - ADR-011 — analysis viewer for decoded `.h5` tables (GPS/IMU/Iridium; bonus, separate from the IQ core)
+- ADR-012 — RF re-emission: BladeRF TX flowgraph (`transmit_sdr.grc`) + the `aerolake-fetch` MinIO→file bridge
 
 ## Testing notes
 

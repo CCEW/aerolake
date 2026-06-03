@@ -22,11 +22,28 @@ Typical loop:
   (at the recorded sample rate) → a Qt GUI sink (spectrum/time) and, later, an
   **SDR sink** to transmit on real hardware.
 
-## Hardware note (ADR-007)
+## Hardware note (ADR-007 / ADR-012)
 
 Real RF re-emission (transmitting a capture over the air) needs a **TX-capable
 SDR — the BladeRF**. The **RTL-SDR is receive-only** and cannot be used for the
 playback/transmit demos.
+
+> ⚠️ **Legal & safety:** transmitting on the GNSS L1 (1575.42 MHz) or Iridium
+> (~1626 MHz) bands **over the air is illegal and jams safety-of-life
+> receivers**. Re-emit only through a **shielded RF cable + attenuator**, a
+> **dummy load**, or a **Faraday enclosure** — never a bare antenna.
+
+## Getting a capture onto local disk: `aerolake-fetch`
+
+The flowgraphs read a *local* file, not MinIO. The bridge CLI pulls a stored
+capture (whole, or just a window via an HTTP Range read) down to disk and prints
+the `samp_rate` / `freq` to paste into the flowgraph variables:
+
+```bash
+# from the uv project (the venv side):
+uv run aerolake-fetch --key iridium/2026-06-02/<id>/capture.sigmf-data \
+    --out /tmp/capture.sigmf-data --start 100 --duration 30
+```
 
 ## Files
 
@@ -39,8 +56,14 @@ playback/transmit demos.
   are already installed (they came with GNU Radio).
 - `playback.grc` — `.sigmf-data` File Source → Throttle → spectrum + waterfall.
   Supports partial reading (`start_s` / `duration_s` → File Source
-  offset/length, ADR-009). An SDR **sink** for real TX comes later (BladeRF —
-  the RTL-SDR is RX-only).
+  offset/length, ADR-009). Software-only view (no transmit).
+- **`transmit_sdr.grc`** — **real RF re-emission** (ADR-012). `.sigmf-data` File
+  Source (with `offset`/`length` partial transmit + `repeat`) → amplitude
+  backoff (`tx_amplitude`) → **Soapy Custom Sink** (default `sdr_driver =
+  "bladerf"`, antenna `"TX"`, `tx_gain`), plus a freq sink to watch what you
+  send. **No Throttle** — the SDR clock paces the stream. Set `samp_rate` /
+  `freq` to match the capture (use `aerolake-fetch`'s printout). **BladeRF only**
+  (RTL-SDR is RX-only); mind the legal/safety note above.
 
 ### Per-device caveats (record_sdr.grc)
 
@@ -59,4 +82,9 @@ gnuradio-companion gnuradio/playback.grc
 
 # Or compile a .grc to a runnable script headlessly (also validates it):
 grcc -o /tmp gnuradio/playback.grc && python3 /tmp/playback.py
+
+# Real RF re-emission (needs a BladeRF + a shielded/attenuated RF path):
+uv run aerolake-fetch --key <data_key> --out /tmp/capture.sigmf-data
+grcc -o /tmp gnuradio/transmit_sdr.grc          # validate
+gnuradio-companion gnuradio/transmit_sdr.grc    # set capture_file/samp_rate/freq, run
 ```
