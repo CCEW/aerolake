@@ -65,6 +65,24 @@ Dans le navigateur :
 
 > Pour arrêter le serveur IHM : `Ctrl+C` dans le terminal où il tourne.
 
+### 3 bis. Tout piloter depuis l'IHM (sans revenir au terminal)
+
+La barre latérale expose désormais **tout le workflow** — pratique pour une démo :
+
+- **📥 Ingest a capture** : un formulaire (chemin du fichier/dossier, glob, type,
+  sample-rate, center-freq, datatype, hardware) + bouton → lance `ingest_files`
+  (multipart). La nouvelle capture apparaît aussitôt dans la liste.
+- **🎛️ Actions on this capture** :
+  - **📡 ZeroMQ stream** : `▶ Start stream` lance `aerolake-stream` en tâche de
+    fond (fenêtre bornée par *Stream duration* → lecture partielle), `⏹ Stop` l'arrête.
+  - **🏷️ Quality** : `✅ Validate` / `❌ Reject` / `↩ Raw` change le **tag qualité**
+    (lire-fusionner-écrire, sans écraser les autres tags).
+  - **🗑️ Danger zone** : coche la confirmation puis `🗑️ Delete capture` (supprime
+    data + meta + rapport qualité).
+- **▶ Animated playback** (section *Time window*) : fait **défiler automatiquement**
+  la fenêtre dans toute la durée — le spectre/spectrogramme avance comme une tête de
+  lecture (chaque pas = une lecture Range mise en cache).
+
 ## 4. Rejouer la capture (playback)
 
 ```bash

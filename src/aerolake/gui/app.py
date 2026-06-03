@@ -23,6 +23,8 @@ testable logic was intentionally pushed down into plots.py.
 from __future__ import annotations
 
 import json
+import subprocess
+import time
 
 import numpy as np
 import streamlit as st
@@ -30,6 +32,8 @@ import streamlit as st
 from aerolake.common.storage import StorageClient, StorageError
 from aerolake.consumer.reader import CaptureReader
 from aerolake.gui import plots, theme
+from aerolake.producer.ingest import ingest_files
+from aerolake.scripts.ingest import _resolve_files
 
 # ---------------------------------------------------------------------------
 # Cached resources / data
@@ -37,6 +41,7 @@ from aerolake.gui import plots, theme
 # Streamlit re-runs this whole script top-to-bottom on every widget change.
 # Caching is therefore essential: without it we'd rebuild the S3 client and
 # re-download the capture on every click.
+
 
 @st.cache_resource
 def _get_clients() -> tuple[StorageClient, CaptureReader]:
@@ -116,6 +121,7 @@ def _load_quality_report(data_key: str) -> dict | None:
 # Small presentation helpers
 # ---------------------------------------------------------------------------
 
+
 def _explain_box(view_key: str) -> None:
     """Render the plain-language explanation for a view as a styled callout."""
     st.markdown(
@@ -136,8 +142,186 @@ def _quality_badge(quality: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Actions — the *write* side (ingest / curate / delete / stream)
+# ---------------------------------------------------------------------------
+# Everything above is read-only. The helpers below let the WHOLE workflow run
+# from the browser — ingest a capture, curate its quality tag, delete it, push
+# it onto the ZeroMQ bus — so you never have to drop back to the terminal during
+# a demo. They reuse the *exact* same library functions the CLIs call; the GUI
+# stays a thin glue layer (no new logic, no direct S3 access).
+
+
+def _ingest_panel() -> None:
+    """Sidebar form that ingests a real IQ file/folder into MinIO.
+
+    The GUI twin of ``aerolake-ingest``: pick a path (a single IQ file, OR a
+    folder of RFSoC ``RX0_pkt_*.bin`` packets), the acquisition parameters, and
+    stream it into the lake with ``ingest_files`` (multipart upload — even a
+    multi-GB folder of packets won't blow up the RAM).
+    """
+    with st.sidebar.expander("📥 Ingest a capture", expanded=False):
+        # A form batches the inputs: nothing runs until "Ingest" is pressed
+        # (without it, Streamlit would re-trigger on every keystroke).
+        with st.form("ingest_form"):
+            path = st.text_input("Path (file or folder)", placeholder="data/.../captures_Test_1")
+            glob_pat = st.text_input("Glob (for folders)", value="RX0_pkt_*.bin")
+            signal_type = st.text_input("Signal type", value="iridium")
+            c1, c2 = st.columns(2)
+            sample_rate = c1.number_input(
+                "Sample rate (Hz)", value=400_000.0, step=1000.0, format="%.0f"
+            )
+            center_freq = c2.number_input(
+                "Center freq (Hz)", value=1_626_271_000.0, step=1000.0, format="%.0f"
+            )
+            datatype = c1.selectbox("Datatype", ["cs32", "cf32", "cu8", "cs16"])
+            hardware = c2.text_input("Hardware", value="rfsoc")
+            submitted = st.form_submit_button("📥 Ingest", use_container_width=True)
+        if not submitted:
+            return
+        if not path.strip():
+            st.warning("Enter a path to an IQ file or a folder of packets.")
+            return
+        # Resolve a single file or a sorted folder of packets (same as the CLI).
+        files = _resolve_files(path.strip(), glob_pat)
+        if not files:
+            st.error(f"No file(s) found at: {path}")
+            return
+        storage, _ = _get_clients()
+        with st.spinner(f"Ingesting {len(files):,} file(s) → MinIO (multipart)…"):
+            try:
+                result = ingest_files(
+                    file_paths=files,
+                    signal_type=signal_type,
+                    sample_rate=float(sample_rate),
+                    center_freq=float(center_freq),
+                    datatype=datatype,
+                    hardware=hardware,
+                    storage_client=storage,
+                )
+            except StorageError as exc:
+                st.error(f"Storage error: {exc}")
+                return
+            except (ValueError, OSError) as exc:
+                st.error(f"Ingestion failed: {exc}")
+                return
+        st.success(f"Ingested {result.sample_count:,} samples → {result.data_key}")
+        # The catalog changed → drop the cached listing so the new capture shows.
+        _list_captures.clear()
+
+
+def _set_quality(data_key: str, new_quality: str) -> None:
+    """Change the quality tag (read-merge-write, NEVER a blind replace).
+
+    ``update_tags`` REPLACES the whole tag set, so we MUST read the existing
+    tags and merge — otherwise we'd wipe signal-type / hardware / recorder
+    (the classic ADR-003 footgun).
+    """
+    storage, _ = _get_clients()
+    tags = storage.get_object_tags(data_key)  # read…
+    tags["quality"] = new_quality  # …merge the one field…
+    storage.update_tags(data_key, tags)  # …write the full set back.
+    _capture_overview.clear()  # tags are cached → refresh them.
+
+
+def _delete_capture(data_key: str) -> int:
+    """Delete every object of a capture (data + meta + quality report).
+
+    A capture is a *folder* of objects under ``…/{session}/`` — we remove them
+    all so no orphan bytes or stale report linger. Returns the count deleted.
+    """
+    storage, _ = _get_clients()
+    session_prefix = data_key.rsplit("/", 1)[0] + "/"
+    deleted = 0
+    for key in list(storage.list_objects(prefix=session_prefix)):
+        storage.delete_object(key)
+        deleted += 1
+    _list_captures.clear()
+    _capture_overview.clear()
+    return deleted
+
+
+def _stream_status() -> subprocess.Popen[bytes] | None:
+    """Return the running stream subprocess, or None if it isn't (still) alive.
+
+    ``poll()`` is None only while the child is still running; once it exits we
+    treat the slot as free again.
+    """
+    proc = st.session_state.get("stream_proc")
+    if proc is not None and proc.poll() is None:
+        return proc
+    return None
+
+
+def _actions_panel(data_key: str, tags: dict) -> None:
+    """Sidebar panel to stream / curate / delete the SELECTED capture."""
+    with st.sidebar.expander("🎛️ Actions on this capture", expanded=False):
+        # --- 📡 ZeroMQ streaming (runs as a background process) -----------
+        st.caption("📡 ZeroMQ stream")
+        bind = st.text_input("Bind address", value="tcp://*:5555", key="stream_bind")
+        duration = st.number_input(
+            "Stream duration (s)",
+            value=10.0,
+            min_value=1.0,
+            step=5.0,
+            key="stream_dur",
+            help="A bounded window (partial read) keeps the demo snappy.",
+        )
+        proc = _stream_status()
+        if proc is None:
+            if st.button("▶ Start stream", use_container_width=True, key="stream_start"):
+                # Launch the CLI as a *separate* process so it streams in the
+                # background (at the recorded cadence) without blocking the GUI.
+                try:
+                    st.session_state.stream_proc = subprocess.Popen(
+                        [
+                            "aerolake-stream",
+                            "--key",
+                            data_key,
+                            "--bind",
+                            bind,
+                            "--duration",
+                            str(duration),
+                        ]
+                    )
+                except OSError as exc:
+                    st.error(f"Could not start stream: {exc}")
+                else:
+                    st.rerun()
+        else:
+            st.success(f"Streaming on {bind} (PID {proc.pid})")
+            if st.button("⏹ Stop stream", use_container_width=True, key="stream_stop"):
+                proc.terminate()
+                st.session_state.stream_proc = None
+                st.rerun()
+
+        st.divider()
+        # --- 🏷️ Quality curation (cheap tag flip, read-merge-write) -------
+        st.caption(f"🏷️ Quality — currently **{tags.get('quality', '—')}**")
+        q1, q2, q3 = st.columns(3)
+        if q1.button("✅ Validate", use_container_width=True):
+            _set_quality(data_key, "validated")
+            st.rerun()
+        if q2.button("❌ Reject", use_container_width=True):
+            _set_quality(data_key, "rejected")
+            st.rerun()
+        if q3.button("↩ Raw", use_container_width=True):
+            _set_quality(data_key, "raw")
+            st.rerun()
+
+        st.divider()
+        # --- 🗑️ Destructive: delete the whole capture ---------------------
+        st.caption("🗑️ Danger zone")
+        confirm = st.checkbox("Yes, delete this capture", key="confirm_delete")
+        if st.button("🗑️ Delete capture", disabled=not confirm, use_container_width=True):
+            n = _delete_capture(data_key)
+            st.success(f"Deleted {n} object(s).")
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
+
 
 def _run() -> None:
     st.set_page_config(
@@ -149,11 +333,13 @@ def _run() -> None:
     st.markdown(theme.STREAMLIT_CSS, unsafe_allow_html=True)
     st.title("📡 AeroLake — Capture Explorer")
 
+    # --- Sidebar: ingest a new capture (always available, even on an empty
+    #     bucket — it's how you add the very first capture from the browser) --
+    _ingest_panel()
+
     # --- Sidebar: selection + view controls -------------------------------
     st.sidebar.header("Capture")
-    prefix = st.sidebar.text_input(
-        "Prefix filter", value="", placeholder="e.g. gnss_l1/"
-    )
+    prefix = st.sidebar.text_input("Prefix filter", value="", placeholder="e.g. gnss_l1/")
 
     # Listing hits MinIO; a failure here usually means MinIO is down / .env is
     # wrong. Surface it clearly instead of a raw traceback.
@@ -187,16 +373,15 @@ def _run() -> None:
     st.sidebar.divider()
     st.sidebar.header("Parameters")
     # FFT size trades frequency resolution (larger) vs smoothness/speed.
-    nperseg = st.sidebar.select_slider(
-        "FFT size", options=[256, 512, 1024, 2048, 4096], value=1024
-    )
-    max_points = st.sidebar.slider(
-        "Constellation points", 1000, 20000, value=5000, step=1000
-    )
+    nperseg = st.sidebar.select_slider("FFT size", options=[256, 512, 1024, 2048, 4096], value=1024)
+    max_points = st.sidebar.slider("Constellation points", 1000, 20000, value=5000, step=1000)
 
     # --- Cheap overview (no samples loaded): duration, metrics, tags ------
     sample_rate, total_samples, center_freq, tags = _capture_overview(data_key)
     total_duration = total_samples / sample_rate if sample_rate else 0.0
+
+    # --- Sidebar: write-side actions on the selected capture --------------
+    _actions_panel(data_key, tags)
 
     st.sidebar.divider()
     st.sidebar.header("Time window")
@@ -243,8 +428,12 @@ def _run() -> None:
                 {
                     k: report[k]
                     for k in (
-                        "clipping_ratio", "rms_power_dbfs", "invalid_count",
-                        "dc_offset_i", "dc_offset_q", "sample_completeness",
+                        "clipping_ratio",
+                        "rms_power_dbfs",
+                        "invalid_count",
+                        "dc_offset_i",
+                        "dc_offset_q",
+                        "sample_completeness",
                         "metadata_valid",
                     )
                     if k in report
@@ -280,11 +469,29 @@ def _run() -> None:
         "Window (s)", options=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0], value=2.0
     )
     max_start = max(0.0, round(total_duration - window_s, 1))
+
+    # --- ▶ Animated playback ----------------------------------------------
+    # "Animated playback" auto-advances the time window so the spectrum and
+    # spectrogram scroll through the whole capture, like a moving playhead.
+    # Streamlit has no real event loop, so we fake it: hold the playhead in
+    # session_state, render the window, then (if playing) bump the playhead and
+    # ask Streamlit to re-run after a short pause (see the bottom of this file).
+    if "play_pos" not in st.session_state:
+        st.session_state.play_pos = 0.0
+    playing = st.sidebar.toggle(
+        "▶ Animated playback",
+        value=False,
+        help="Auto-advance the window through the whole capture (a moving playhead).",
+    )
+    # The slider is keyless and takes its value FROM the playhead, so the
+    # auto-advance can move it; dragging it by hand updates the playhead too.
+    pos0 = min(st.session_state.play_pos, max_start)
     start_s = (
-        st.sidebar.slider("Start (s)", 0.0, max_start, 0.0, step=0.5)
+        st.sidebar.slider("Start (s)", 0.0, max_start, value=pos0, step=0.5)
         if max_start > 0
         else 0.0
     )
+    st.session_state.play_pos = start_s
     samples, _sigmf_meta, _tags, _metadata = _load_segment(data_key, start_s, window_s)
 
     summary = plots.describe_signal(samples, sample_rate, center_freq)
@@ -319,6 +526,16 @@ def _run() -> None:
             plots.constellation_figure(samples, max_points=max_points),
             use_container_width=True,
         )
+
+    # --- ▶ Animated playback: advance the playhead and re-run -------------
+    # Done LAST, after the figures are drawn: move the window forward by one
+    # window-length, wrap to 0 at the end (so it loops), pause briefly, then
+    # re-run. The cached Range reads make each step cheap.
+    if playing and max_start > 0:
+        nxt = start_s + window_s
+        st.session_state.play_pos = 0.0 if nxt > max_start else round(nxt, 1)
+        time.sleep(0.6)
+        st.rerun()
 
 
 # Streamlit executes the module top-level on each run, so we just call _run().
