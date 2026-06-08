@@ -29,9 +29,7 @@ aerolake-list = "aerolake.scripts.catalog:main"
 aerolake-play = "aerolake.scripts.play:main"
 aerolake-stream = "aerolake.scripts.stream:main"
 aerolake-subscribe = "aerolake.scripts.subscribe:main"
-aerolake-fetch = "aerolake.scripts.fetch:main"
-aerolake-gui = "aerolake.gui.launch:main"
-aerolake-analysis = "aerolake.analysis.launch:main"
+
 
 [dependency-groups]
 dev = [
@@ -40,25 +38,6 @@ dev = [
     "ruff>=0.3.0",
     "mypy>=1.9.0",
     "moto[s3]>=5.0.0",
-    # plotly lives here too (not just in the gui group) so the pure plot
-    # functions in aerolake.gui.plots can be unit-tested in CI without pulling
-    # in the heavier streamlit runtime. h5py is here so the Iridium analysis
-    # loader (aerolake.analysis.iridium) is testable in CI.
-    "plotly>=5.24.0",
-    "h5py>=3.10.0",
-    # skyfield (+sgp4) powers the Iridium Doppler/skyplot TLE prediction
-    # (aerolake.analysis.doppler); in dev so it's testable in CI offline.
-    "skyfield>=1.49",
-]
-
-# Optional GUI runtime. Install with `uv sync --group gui`; run the app with
-# `uv run --group gui aerolake-gui`. Kept out of the core dependencies so the
-# pipeline/CLIs stay lean and don't drag in the web stack.
-gui = [
-    "streamlit>=1.40.0",
-    "plotly>=5.24.0",
-    "h5py>=3.10.0",
-    "skyfield>=1.49",
 ]
 
 [build-system]
@@ -93,5 +72,5 @@ plugins = ["pydantic.mypy"]
 # Third-party libraries that ship no type stubs / py.typed marker. Without this
 # mypy emits "missing library stubs" errors for imports we don't control.
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "sigmf.*", "streamlit.*", "plotly.*", "h5py.*", "skyfield.*"]
+module = ["boto3.*", "botocore.*", "sigmf.*"]
 ignore_missing_imports = true
