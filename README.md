@@ -1,60 +1,84 @@
 # AeroLake
 
-Pipeline Python end-to-end pour l'enregistrement, le stockage et l'extraction d'environnements RF.
+Pipeline Python end-to-end pour l'enregistrement, le stockage et l'extraction d'environnements RF — projet LASSENA.
 
-AeroLake capture des signaux radiofréquences via des SDR (RTL-SDR, BladeRF), les stocke au format SigMF dans un data lakehouse MinIO, puis les ré-expose via un bus ZeroMQ Pub/Sub haute performance prêt à alimenter des décodeurs logiciels ou de futurs émetteurs SDR.
+AeroLake capture des signaux radiofréquences, les stocke au format SigMF dans un data lakehouse MinIO (avec métadonnées et tags natifs pour la recherche), puis les ré-expose via un bus ZeroMQ Pub/Sub. L'objectif central : que n'importe quel membre du laboratoire puisse retrouver et rejouer n'importe quelle capture grâce à des métadonnées standardisées.
 
-## Statut du projet
+## Périmètre
 
-Phase 0 — Mise en place de l'infrastructure et du squelette projet. Le code applicatif sera livré dans les sprints suivants.
+Ce dépôt suit le mandat du projet (docs/LASSENA-Project_AeroLake.pdf) : un pipeline RX (réception) en quatre sprints.
 
-## Architecture cible
+    Producer (capture -> SigMF)  ->  MinIO (lakehouse)  ->  Consumer (extraction -> ZeroMQ)
 
-- **Producer** : capture RF via SoapySDR → format SigMF → upload multipart vers MinIO
-- **Lakehouse** : MinIO (S3-compatible) avec métadonnées natives et tagging
-- **Consumer** : extraction par HTTP Range Requests → publication ZeroMQ Pub/Sub
-- **Évolution prévue** : Apache Parquet + Apache Iceberg pour la couche analytique
+- Producer — génère/encode des échantillons IQ au format SigMF et les pousse dans MinIO (multipart upload).
+- Lakehouse — MinIO (S3-compatible) : stockage des .sigmf-data + .sigmf-meta, avec métadonnées d'objet (x-amz-meta-*) et tags pour la découverte rapide et le cycle de vie.
+- Consumer — relit les captures par HTTP Range Requests et les publie sur un bus ZeroMQ Pub/Sub, prêt à alimenter décodeurs logiciels, scripts de validation ou, en phase future, un émetteur SDR.
+- Quality — couche de support qui mesure la qualité des captures (clipping, RMS, échantillons invalides, complétude, validité SigMF) et promeut un tag quality (raw -> validated/rejected).
+
+### Hors-périmètre (phases futures, archivé)
+
+Les composants suivants ont été développés puis archivés pour recentrer le projet sur le mandat. Ils sont préservés intégralement sur la branche archive/explorations-v1 et restent récupérables :
+
+- Interface graphique de visualisation Streamlit/Plotly (ADR-006)
+- Module d'analyse de données décodées .h5 — Doppler/IMU/GPS (ADR-011)
+- Émission RF / TX — flowgraph BladeRF + pont MinIO->fichier (ADR-012)
+- Évolution analytique Parquet / Apache Iceberg
+
+Voir ADR-013 pour le détail de ce recadrage.
 
 ## Prérequis
 
 - WSL2 + Ubuntu 22.04+ (Windows) ou Linux natif / macOS
 - Docker Desktop avec intégration WSL2
-- Python 3.12+ via [uv](https://github.com/astral-sh/uv)
+- Python 3.12+ via uv (https://github.com/astral-sh/uv)
 - Git
 
 ## Quick start
 
-```bash
-# Cloner le repo
-git clone <url-gitlab>
-cd aerolake
+    git clone <url>
+    cd aerolake
+    cp .env.example .env
+    uv sync
+    cd docker && docker compose up -d
 
-# Configurer l'environnement
-cp .env.example .env
+## Commandes principales
 
-# Installer les dépendances Python
-uv sync
+    uv run aerolake-healthcheck
+    uv run aerolake-producer --preset gnss-l1 --duration 1.0
+    uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6
+    uv run aerolake-validate --prefix gnss_l1/ --dry-run
+    uv run aerolake-list --quality validated
+    uv run aerolake-play --prefix gnss_l1/
+    uv run aerolake-stream --prefix gnss_l1/
+    uv run aerolake-subscribe --address tcp://localhost:5555
 
-# Démarrer MinIO
-cd docker && docker compose up -d
-```
+## Qualité / tests
+
+    uv run ruff check .
+    uv run ruff format .
+    uv run mypy src
+    uv run pytest
+
+Un test d'intégration optionnel (tests/integration/) s'exécute contre un vrai MinIO : AEROLAKE_RUN_INTEGRATION=1 uv run pytest -m integration
 
 ## Structure du projet
-aerolake/
-├── src/aerolake/      Code applicatif Python
-│   ├── common/        Configuration, storage, logging
-│   ├── producer/      Pipeline d'ingestion SDR → SigMF → MinIO
-│   ├── consumer/      Pipeline d'extraction MinIO → ZeroMQ
-│   └── scripts/       Utilitaires CLI (healthcheck, init)
-├── tests/             Tests pytest (unit + integration)
-├── docker/            Compose files et infra locale
-├── docs/              Documentation et ADR
-└── data/              Données locales (gitignored)
+
+    aerolake/
+    ├── src/aerolake/
+    │   ├── common/     Configuration, storage (chokepoint S3), logging
+    │   ├── producer/   Capture/ingestion -> SigMF -> MinIO
+    │   ├── consumer/   Extraction MinIO (HTTP Range) -> ZeroMQ
+    │   ├── quality/    Métriques de qualité + checker (support)
+    │   └── scripts/    Points d'entrée CLI
+    ├── tests/          Tests pytest (moto)
+    ├── docker/         MinIO local (docker-compose)
+    ├── gnuradio/       Flowgraphs Record / Playback
+    └── docs/           Documentation et ADR
 
 ## Documentation
 
-Voir le dossier `docs/` pour les Architectural Decision Records et la documentation détaillée.
+Le dossier docs/adr/ contient les Architectural Decision Records — la trace des décisions de conception. ADR-013 documente le recadrage sur le mandat ; les ADR des composants archivés (006, 011, 012) y sont conservés et marqués comme tels.
 
-## Auteurs
+## Auteur
 
 Théo Schmitt — LASSENA

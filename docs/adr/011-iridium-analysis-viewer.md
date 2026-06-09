@@ -1,5 +1,7 @@
 # ADR-011 — Iridium analysis viewer (decoded .h5), separate from the IQ core
 
+> **Archivé — hors-périmètre phase 1 (voir ADR-013).** Ce composant a été retiré de `main` et préservé sur la branche `archive/explorations-v1`. Cet ADR est conservé comme trace de décision.
+
 - **Status:** Accepted
 - **Date:** 2026-06-01
 - **Author:** Théo Schmitt

@@ -1,5 +1,7 @@
 # ADR-012 — RF re-emission: BladeRF TX flowgraph + a MinIO→file fetch bridge
 
+> **Archivé — hors-périmètre phase 1 (voir ADR-013).** Ce composant a été retiré de `main` et préservé sur la branche `archive/explorations-v1`. Cet ADR est conservé comme trace de décision.
+
 - **Status:** Accepted
 - **Date:** 2026-06-03
 - **Author:** Théo Schmitt

@@ -32,12 +32,6 @@ uv run aerolake-list --quality validated     # list/filter captures by tag (no b
 uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # partial read: t=200s, 10s (HTTP Range)
 uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over ZeroMQ Pub/Sub
 uv run aerolake-subscribe --address tcp://localhost:5555   # subscribe to a ZeroMQ stream (the receiving half, any device)
-uv run aerolake-fetch --key gnss_l1/…/capture.sigmf-data --out /tmp/capture.sigmf-data   # MinIO→local cf32 file bridge for GNU Radio (ADR-012)
-
-# Visualization GUI (Streamlit + Plotly; optional `gui` dependency group)
-uv sync --group gui                  # install the GUI runtime (streamlit + plotly)
-uv run --group gui aerolake-gui      # launch the web app (browser at localhost:8501)
-uv run --group gui aerolake-analysis # BONUS: viewer for decoded GPS/IMU/Iridium .h5 tables (NOT IQ)
 
 # Quality / linting / tests
 uv run ruff check .              # lint  (ruff config in pyproject; line-length 100, E501 ignored)
@@ -88,44 +82,24 @@ a "curated" capture. Four packages under `src/aerolake/`:
   clipping ratio, RMS dBFS, invalid samples, DC offset, completeness, SigMF metadata validity).
   `checker.py` (`QualityChecker`/`QualityReport`) applies configurable `QualityThresholds` to
   those metrics and produces a pass/fail verdict.
-- **`gui/`** (ADR-006, optional `gui` dep group) — Streamlit web app. Same pure-vs-glue split:
-  `plots.py` is **pure DSP functions** (Welch spectrum, STFT spectrogram, constellation → Plotly
-  figures, unit-tested), `theme.py` is the aerospace dark styling, `app.py` is thin Streamlit glue
-  that reads via `CaptureReader` (never S3 directly), loading a **time window** via `read_segment`
-  (partial read — multi-GB captures open instantly and you can seek), with a **whole-capture
-  overview** mode (full-duration waterfall built from ~240 strided Range reads), `launch.py` is the
-  `aerolake-gui` entry point.
-- **`analysis/`** (ADR-011, BONUS, optional `gui` deps + `h5py`) — *separate from the IQ core*.
-  Multi-modal viewer for **decoded** `.h5` tables (GR-Iridium Toolkit + ublox/VN100 output:
-  `GPS_Analysis`/`IMU_Analysis`/`Iridium_Analysis` groups — **not** raw IQ, never enters MinIO).
-  `tables.py` = pure loader (`load_table`/`list_datasets`, kind detection) + per-modality Plotly
-  figures (`figures_for`, tested); `app.py` = Streamlit app `aerolake-analysis` (pick file → run →
-  type-aware plots: GPS **OpenStreetMap map** (`go.Scattermap`, no token) + X/Y track + altitude,
-  IMU orientation/accel/gyro, Iridium SNR/frequency). `doppler.py` is a Plotly port of the lab's
-  Iridium Doppler script (pure: parse a decoded acquisition TSV/`IRA:` log + a TLE → **measured vs
-  TLE-predicted Doppler S-curves** and a **skyplot** az/el, via Skyfield/SGP4); the `aerolake-analysis`
-  app has a second mode "🛰️ Doppler / Skyplot" with a time cursor you can animate (`st.fragment`).
-
 `scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `ingest.py`, `validate.py`,
-`catalog.py`, `play.py`, `stream.py`, `subscribe.py`, `fetch.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
+`catalog.py`, `play.py`, `stream.py`, `subscribe.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
 2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
-structlog logs go to stderr, keeping stdout clean for results (`--json`, tables). `fetch.py`
-(`aerolake-fetch`, ADR-012) is the **MinIO→local-file bridge** for GNU Radio: it reads a capture
-(whole, or a window via `read_segment`/Range) through `CaptureReader` and writes the raw `cf32_le`
-bytes + a `.sigmf-meta` sidecar to disk, printing the `samp_rate`/`freq` to paste into a flowgraph.
+structlog logs go to stderr, keeping stdout clean for results (`--json`, tables).
 
-### GNU Radio flowgraphs (`gnuradio/`, ADR-007 layer 2/3, ADR-012)
+### GNU Radio flowgraphs (`gnuradio/`, ADR-007 layer 2/3)
 
-`gnuradio/` holds `record.grc` / `record_sdr.grc` / `playback.grc` / `transmit_sdr.grc` —
+`gnuradio/` holds `record.grc` / `playback.grc` —
 **separate from the uv project**: they need a system GNU Radio (`sudo apt install gnuradio`, 3.10+)
 and run with the *system* Python that ships its bindings, not `.venv`. The bridge to the rest of
 AeroLake is the **`.sigmf-data` file itself**: it is raw `cf32_le`, which GNU Radio's File
-Source/Sink read/write natively as *complex* — no SigMF block needed. Get a capture onto local disk
-with **`aerolake-fetch`** (ADR-012). Validate a `.grc` headlessly with `grcc -o /tmp
-gnuradio/playback.grc`; the generated `.py` is gitignored. **Real RF transmit** —
-`transmit_sdr.grc` (File Source → amplitude backoff → Soapy Custom **Sink**, ADR-012) — needs the
-**BladeRF** (the RTL-SDR is RX-only). ⚠️ Emitting on GNSS/Iridium bands over the air is illegal and
-jams real receivers: use a shielded cable + attenuator / dummy load / Faraday enclosure.
+Source/Sink read/write natively as *complex* — no SigMF block needed. Validate a `.grc` headlessly
+with `grcc -o /tmp gnuradio/playback.grc`; the generated `.py` is gitignored.
+
+> **Note:** the TX flowgraph (`transmit_sdr.grc`), the direct-SDR capture flowgraph
+> (`record_sdr.grc`) and the `aerolake-fetch` MinIO→file bridge were **archived** (out of phase-1
+> scope, ADR-013) and live on the `archive/explorations-v1` branch. RF transmit is explicitly a
+> future phase per the mandate.
 
 ### Conventions that span multiple files
 
@@ -159,14 +133,16 @@ These are the load-bearing decisions; read the referenced ADR before changing th
   needs `signature_version="s3v4"` + path-style addressing (already configured). boto3 (not
   minio-py) was chosen for portability and moto support.
 
-### Project direction (read ADR-004 first)
+### Project direction (read ADR-013 first)
 
-ADR-004 reprioritized the project after a call with the project lead: **input data quality and a
-curated dataset are the priority**, not real-time delivery. So the **quality layer is the current
-focus**; the **streaming pipeline (multipart upload, HTTP Range Requests, ZeroMQ Pub/Sub) is
-deferred**, and real SDR capture (SoapySDR) is still future work. The README's "Architecture cible"
-describes the eventual end state, not what exists today — trust the ADRs and the code for current
-status.
+**ADR-013 realigned the project on the mandate (recadrage, 2026-06-08).** The core deliverable is
+the **RX pipeline**: capture → MinIO (SigMF + metadata/tags) → HTTP Range extraction → ZeroMQ
+Pub/Sub. An earlier reprioritization toward data quality (ADR-004, after a call with the
+supervisor) had deferred the streaming path; ADR-013 **restores streaming as the priority** and
+keeps the **quality layer as a support tool**, not the central axis. Out-of-scope explorations
+(GUI/ADR-006, `.h5` analysis/ADR-011, TX/ADR-012) were **archived** to the
+`archive/explorations-v1` branch. Real SDR capture (SoapySDR) is still future work — today the
+producer generates synthetic signals. Trust the ADRs and the code for current status.
 
 ## Project context & history
 
@@ -174,9 +150,10 @@ status.
 discussions (21–29 May 2026) that predate this repo: the project goal, the 3 demos
 (GNSS/Iridium/Starlink), the people (Abdu = project lead, Malek = tutor, Wissem/Ahmad =
 receiver owners, Pierre/Lucien = NeSIVA predecessors), the hardware (BladeRF + RTL-SDR,
-remote MinIO at fast.etsmtl.ca), and the roadmap Théo wants (finish infra → visualization
-GUI → GNU Radio Record/Playback → test on real data). Read it for the *why* behind the
-code. Raw transcripts live under `docs/context/transcripts/` (gitignored).
+remote MinIO at fast.etsmtl.ca). Read it for the *why* behind the
+code. **Note:** that historical roadmap predates the ADR-013 recadrage; the current direction
+follows the mandate's sprint plan (see ADR-013), not the earlier GUI-first roadmap.
+Raw transcripts live under `docs/context/transcripts/` (gitignored).
 
 Note: Théo prefers **heavily commented, pedagogical code** — match the existing comment
 density in `src/`, it is intentional (a learning aid), not clutter.
@@ -190,15 +167,16 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-001 — boto3 over the MinIO SDK
 - ADR-002 — batch upload now, streaming later
 - ADR-003 — metadata vs. tagging convention (the key layout + lifecycle)
-- ADR-004 — prioritize data quality over streaming (reorders the roadmap)
+- ADR-004 — prioritize data quality over streaming (priority later corrected by ADR-013)
 - ADR-005 — consumer-side quality tag promotion lifecycle (raw → validated/rejected)
-- ADR-006 — visualization GUI: Streamlit + Plotly web app
-- ADR-007 — playback strategy (software cadence replay now; GNU Radio + SDR re-emission later)
+- ADR-006 — *(archived, ADR-013)* visualization GUI: Streamlit + Plotly web app
+- ADR-007 — playback strategy (software cadence replay now; SDR re-emission later)
 - ADR-008 — ZeroMQ Pub/Sub streaming of capture frames (reactivates ADR-002's streaming half)
 - ADR-009 — partial/seeked reads via HTTP Range Requests (Python `read_segment` + GNU Radio offset/length)
 - ADR-010 — streaming multipart upload to bypass RAM (`StorageClient.upload_multipart`)
-- ADR-011 — analysis viewer for decoded `.h5` tables (GPS/IMU/Iridium; bonus, separate from the IQ core)
-- ADR-012 — RF re-emission: BladeRF TX flowgraph (`transmit_sdr.grc`) + the `aerolake-fetch` MinIO→file bridge
+- ADR-011 — *(archived, ADR-013)* analysis viewer for decoded `.h5` tables (GPS/IMU/Iridium)
+- ADR-012 — *(archived, ADR-013)* RF re-emission: BladeRF TX flowgraph + MinIO→file bridge
+- ADR-013 — **realignment on the mandate** (recadrage): restores the RX→MinIO→ZMQ streaming path as priority, keeps quality as support, archives GUI/analysis/TX
 
 ## Testing notes
 
