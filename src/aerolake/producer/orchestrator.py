@@ -15,6 +15,7 @@ This module is the entry point used by the producer CLI.
 
 from __future__ import annotations
 
+import getpass
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -62,6 +63,10 @@ def capture_and_upload(
     tone_offset_hz: float = 100_000.0,
     snr_db: float = 20.0,
     seed: int | None = None,
+    signal_type_detail: str | None = None,
+    operator: str | None = None,
+    location: str | None = None,
+    mobile: bool = False,
     storage_client: StorageClient | None = None,
 ) -> CaptureResult:
     """Generate a synthetic capture and upload it as SigMF in MinIO.
@@ -88,6 +93,14 @@ def capture_and_upload(
     CaptureResult
     """
     client = storage_client or StorageClient()
+
+    # Operator defaults to the session account. Each user has their own login,
+    # so this identifies "who recorded" with no manual entry and no typos.
+    if operator is None:
+        try:
+            operator = getpass.getuser()
+        except Exception:
+            operator = "unknown"
 
     # --- Session identification ------------------------------------------
     # 8 hex chars = ~4 billion possibilities, plenty for our usage.
@@ -122,7 +135,14 @@ def capture_and_upload(
     )
 
     # --- 2. Encode -------------------------------------------------------
-    capture = encode(signal)
+    capture = encode(
+        signal,
+        signal_type=signal_type,
+        signal_type_detail=signal_type_detail,
+        operator=operator,
+        location=location,
+        mobile=mobile,
+    )
     log.info(
         "producer.capture.encoded",
         data_bytes=len(capture.data_bytes),
@@ -146,6 +166,8 @@ def capture_and_upload(
     # "validated" or "rejected" (see ADR-005 for the promotion lifecycle).
     data_tags = {
         "signal-type": signal_type,
+        "operator": operator,
+        "mobile": "true" if mobile else "false",
         "recorder": "aerolake-producer-synthetic",
         "hardware": "synthetic",
         "quality": "raw",

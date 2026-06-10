@@ -53,6 +53,11 @@ def encode(
     author: str = "AeroLake",
     recorder: str = "aerolake-producer-synthetic",
     hardware: str = "synthetic",
+    signal_type: str | None = None,
+    signal_type_detail: str | None = None,
+    operator: str | None = None,
+    location: str | None = None,
+    mobile: bool | None = None,
 ) -> SigMFCapture:
     """Encode a SyntheticSignal into SigMF byte streams.
 
@@ -82,16 +87,45 @@ def encode(
     data_bytes = signal.samples.tobytes()
 
     # --- 2. Build the metadata dict per SigMF v1.0.0 spec ------------------
+    # AeroLake namespace: lab-specific, discovery-oriented fields. SigMF leaves
+    # domain fields open; we prefix ours with "aerolake:" so they coexist with
+    # core: without clashing. Duration is always derived (never hand-entered).
+    # Optional fields are omitted when absent, so "no location" is a real
+    # absence rather than an empty string.
+    sample_rate = float(signal.sample_rate)
+    duration_s = len(signal.samples) / sample_rate if sample_rate > 0 else 0.0
+    global_block: dict[str, object] = {
+        "core:datatype": SIGMF_DATATYPE_CF32_LE,
+        "core:sample_rate": sample_rate,
+        "core:author": author,
+        "core:description": signal.description,
+        "core:recorder": recorder,
+        "core:hw": hardware,
+        "core:version": SIGMF_VERSION,
+        "aerolake:duration_s": duration_s,
+        "aerolake:sample_count": len(signal.samples),
+    }
+    if signal_type is not None:
+        global_block["aerolake:signal_type"] = signal_type
+    if signal_type_detail is not None:
+        global_block["aerolake:signal_type_detail"] = signal_type_detail
+    if operator is not None:
+        global_block["aerolake:operator"] = operator
+    if location is not None:
+        global_block["aerolake:location"] = location
+    if mobile is not None:
+        global_block["aerolake:mobile"] = bool(mobile)
+
+    # Declare the aerolake namespace as a SigMF extension. The spec requires
+    # any custom "<name>:" field to be declared here; without this, current
+    # SigMF warns and future versions reject the file. optional=True: readers
+    # that don't know the extension can still decode the IQ.
+    global_block["core:extensions"] = [
+        {"name": "aerolake", "version": "1.0.0", "optional": True}
+    ]
+
     metadata = {
-        "global": {
-            "core:datatype": SIGMF_DATATYPE_CF32_LE,
-            "core:sample_rate": float(signal.sample_rate),
-            "core:author": author,
-            "core:description": signal.description,
-            "core:recorder": recorder,
-            "core:hw": hardware,
-            "core:version": SIGMF_VERSION,
-        },
+        "global": global_block,
         "captures": [
             {
                 "core:sample_start": 0,
