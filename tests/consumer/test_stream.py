@@ -102,3 +102,40 @@ def test_real_pubsub_roundtrip() -> None:
     topic, _header, out = received
     assert topic == "gnss_l1"
     np.testing.assert_array_equal(out, frame)
+
+
+# --- Radio context in the frame header (center_freq + sample_rate) -------
+
+def test_header_includes_radio_context_when_set() -> None:
+    sock = _FakeSocket()
+    pub = FramePublisher(
+        sock, "gnss_l1", center_freq=1_575_420_000.0, sample_rate=2_000_000.0
+    )
+    pub.publish(0, _frame())
+    _, header, _ = decode_frame(sock.sent[0])
+    assert header["center_freq"] == 1_575_420_000.0
+    assert header["sample_rate"] == 2_000_000.0
+
+
+def test_header_omits_radio_context_when_absent() -> None:
+    sock = _FakeSocket()
+    pub = FramePublisher(sock, "gnss_l1")
+    pub.publish(0, _frame())
+    _, header, _ = decode_frame(sock.sent[0])
+    assert "center_freq" not in header
+    assert "sample_rate" not in header
+    assert header["index"] == 0
+    assert header["dtype"] == "complex64"
+
+
+def test_radio_context_repeated_on_every_frame() -> None:
+    sock = _FakeSocket()
+    pub = FramePublisher(
+        sock, "iridium", center_freq=1_626_270_000.0, sample_rate=2_000_000.0
+    )
+    for i in range(3):
+        pub.publish(i, _frame())
+    for parts in sock.sent:
+        _, header, _ = decode_frame(parts)
+        assert header["center_freq"] == 1_626_270_000.0
+        assert header["sample_rate"] == 2_000_000.0

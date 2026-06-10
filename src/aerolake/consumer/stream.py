@@ -64,23 +64,55 @@ class FramePublisher:
     ``on_frame`` hook, so you can wire them together directly:
 
         player.play(key, on_frame=publisher.publish)
+
+    The capture's ``center_freq`` and ``sample_rate`` are fixed for the whole
+    stream, so they're set once at construction and echoed in every frame
+    header. A subscriber (e.g. a positioning algorithm) therefore knows the
+    radio context from the very first frame it receives, without a separate
+    handshake -- and even if it joins mid-stream (ZeroMQ's "slow joiner").
     """
 
-    def __init__(self, socket: zmq.Socket, topic: str) -> None:
+    def __init__(
+        self,
+        socket: zmq.Socket,
+        topic: str,
+        *,
+        center_freq: float | None = None,
+        sample_rate: float | None = None,
+    ) -> None:
         self._socket = socket
         self._topic = topic
+        self._center_freq = center_freq
+        self._sample_rate = sample_rate
 
     @classmethod
-    def bind(cls, address: str, topic: str) -> FramePublisher:
+    def bind(
+        cls,
+        address: str,
+        topic: str,
+        *,
+        center_freq: float | None = None,
+        sample_rate: float | None = None,
+    ) -> FramePublisher:
         """Create a PUB socket bound to ``address`` (e.g. ``tcp://*:5555``)."""
         context = zmq.Context.instance()
         socket = context.socket(zmq.PUB)
         socket.bind(address)
-        return cls(socket, topic)
+        return cls(
+            socket, topic, center_freq=center_freq, sample_rate=sample_rate
+        )
 
     def publish(self, index: int, frame: np.ndarray) -> None:
         """Send one frame as a multipart message (matches on_frame signature)."""
-        header = {"index": index, "n": len(frame), "dtype": str(frame.dtype)}
+        header: dict[str, Any] = {
+            "index": index,
+            "n": len(frame),
+            "dtype": str(frame.dtype),
+        }
+        if self._center_freq is not None:
+            header["center_freq"] = self._center_freq
+        if self._sample_rate is not None:
+            header["sample_rate"] = self._sample_rate
         self._socket.send_multipart(encode_frame(self._topic, header, frame))
 
     def close(self) -> None:

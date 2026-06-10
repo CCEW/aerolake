@@ -108,19 +108,30 @@ def main(
         return 0
 
     # Topic defaults to the capture's signal-type tag (so subscribers can filter
-    # by signal), falling back to a generic "frames".
+    # by signal), falling back to a generic "frames". The same cheap HEAD lookup
+    # also gives us the radio context (center freq + sample rate) to advertise in
+    # every frame header, so a positioning subscriber can self-configure.
     topic = args.topic
-    if topic is None:
-        try:
-            topic = player.reader.inspect(key).tags.get("signal-type", "frames")
-        except StorageError as exc:
-            console.print(f"[bold red]✗ Storage error:[/] {exc}")
-            return 1
+    center_freq: float | None = None
+    sample_rate: float | None = None
+    try:
+        info = player.reader.inspect(key)
+        if topic is None:
+            topic = info.tags.get("signal-type", "frames")
+        cf = info.metadata.get("center-freq")
+        sr = info.metadata.get("sample-rate")
+        center_freq = float(cf) if cf is not None else None
+        sample_rate = float(sr) if sr is not None else None
+    except StorageError as exc:
+        console.print(f"[bold red]✗ Storage error:[/] {exc}")
+        return 1
 
     # Build the publisher unless one was injected (tests inject a fake).
     created_publisher = publisher is None
     if publisher is None:
-        publisher = FramePublisher.bind(args.bind, topic)
+        publisher = FramePublisher.bind(
+            args.bind, topic, center_freq=center_freq, sample_rate=sample_rate
+        )
 
     realtime = not args.no_realtime
     console.print(
