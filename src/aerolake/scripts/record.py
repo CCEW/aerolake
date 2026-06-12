@@ -38,6 +38,8 @@ from rich.table import Table
 from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageError
 from aerolake.producer.orchestrator import capture_and_upload
+from aerolake.producer.soapy_source import SoapyParams
+from aerolake.producer.synthetic import SyntheticParams
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,31 @@ def _ask_signal(console: Console) -> dict:
     }
 
 
+def _ask_source(console: Console) -> SyntheticParams | SoapyParams:
+    """Numbered menu for the acquisition source.
+
+    Synthetic needs no hardware and is the safe default. The real-SDR
+    entries map to SoapySDR driver keys; picking one asks only for the
+    gain (the one knob that varies per band/antenna), keeping the guided
+    flow short. The antenna port stays on the device default.
+    """
+    console.print("\n[bold]Signal source?[/]")
+    console.print("  [cyan]1[/] Synthetic (no hardware needed)")
+    console.print("  [cyan]2[/] Real SDR — RTL-SDR")
+    console.print("  [cyan]3[/] Real SDR — BladeRF")
+    pick = Prompt.ask("Your choice", choices=["1", "2", "3"], default="1")
+
+    if pick == "1":
+        return SyntheticParams()
+
+    driver = "rtlsdr" if pick == "2" else "bladerf"
+    gain = FloatPrompt.ask(
+        "  Gain in dB (GPS L1 with an active antenna needs a high gain)",
+        default=40.0,
+    )
+    return SoapyParams(driver=driver, gain=gain)
+
+
 def _ask_mobile(console: Console) -> bool:
     """Two-choice fixed/mobile question — no free text, no inconsistency."""
     console.print("\n[bold]Was the acquisition fixed or mobile?[/]")
@@ -144,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     console.print("[bold cyan]AeroLake — guided capture[/]")
     console.print("[dim]Answer the prompts; the operator is taken from your session.[/]")
 
+    source = _ask_source(console)
     signal = _ask_signal(console)
     duration_s = FloatPrompt.ask("\n[bold]Capture duration in seconds[/]", default=1.0)
     mobile = _ask_mobile(console)
@@ -160,6 +188,10 @@ def main(argv: list[str] | None = None) -> int:
     recap.add_row("Duration", f"{duration_s} s")
     recap.add_row("Mobile", "yes" if mobile else "no")
     recap.add_row("Location", location or "(not specified)")
+    if isinstance(source, SoapyParams):
+        recap.add_row("Source", f"Real SDR ({source.driver}, gain {source.gain:.0f} dB)")
+    else:
+        recap.add_row("Source", "Synthetic")
     console.print(recap)
 
     if not Confirm.ask("\nStart the recording?", default=True):
@@ -172,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
             duration_s=duration_s,
             mobile=mobile,
             location=location,
+            source=source,
             **signal,
         )
     except StorageError as exc:
