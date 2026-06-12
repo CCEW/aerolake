@@ -23,8 +23,13 @@ from datetime import UTC, datetime
 import structlog
 
 from aerolake.common.storage import StorageClient
-from aerolake.producer.sigmf_writer import encode
-from aerolake.producer.synthetic import generate_tone
+from aerolake.producer.sigmf_writer import EncodableSignal, encode
+from aerolake.producer.soapy_source import (
+    SdrCapture,
+    SoapyParams,
+    capture_from_sdr,
+)
+from aerolake.producer.synthetic import SyntheticParams, generate_tone
 
 logger = structlog.get_logger(__name__)
 
@@ -60,9 +65,7 @@ def capture_and_upload(
     duration_s: float,
     sample_rate: float,
     center_freq: float,
-    tone_offset_hz: float = 100_000.0,
-    snr_db: float = 20.0,
-    seed: int | None = None,
+    source: SyntheticParams | SoapyParams | None = None,
     signal_type_detail: str | None = None,
     operator: str | None = None,
     location: str | None = None,
@@ -120,14 +123,38 @@ def capture_and_upload(
     log.info("producer.capture.start", duration_s=duration_s)
 
     # --- 1. Generate -----------------------------------------------------
-    signal = generate_tone(
-        duration_s=duration_s,
-        sample_rate=sample_rate,
-        center_freq=center_freq,
-        tone_offset_hz=tone_offset_hz,
-        snr_db=snr_db,
-        seed=seed,
-    )
+    # Acquisition source: the *type* of `source` selects the path. Both
+    # generate_tone and capture_from_sdr return an object exposing the same
+    # four attributes the encoder reads (samples, sample_rate, center_freq,
+    # description), so everything downstream is source-agnostic.
+    # Annotated as the Protocol so mypy accepts either concrete type
+    # (SyntheticSignal or SdrCapture) assigned in the branches below.
+    signal: EncodableSignal
+    if source is None:
+        source = SyntheticParams()
+
+    if isinstance(source, SoapyParams):
+        signal = capture_from_sdr(
+            duration_s=duration_s,
+            sample_rate=sample_rate,
+            center_freq=center_freq,
+            driver=source.driver,
+            gain=source.gain,
+            antenna=source.antenna,
+        )
+        recorder = "aerolake-producer-soapy"
+        hardware = signal.driver
+    else:
+        signal = generate_tone(
+            duration_s=duration_s,
+            sample_rate=sample_rate,
+            center_freq=center_freq,
+            tone_offset_hz=source.tone_offset_hz,
+            snr_db=source.snr_db,
+            seed=source.seed,
+        )
+        recorder = "aerolake-producer-synthetic"
+        hardware = "synthetic"
     log.info(
         "producer.capture.generated",
         sample_count=len(signal.samples),
@@ -168,10 +195,16 @@ def capture_and_upload(
         "signal-type": signal_type,
         "operator": operator,
         "mobile": "true" if mobile else "false",
-        "recorder": "aerolake-producer-synthetic",
-        "hardware": "synthetic",
+        "recorder": recorder,
+        "hardware": hardware,
         "quality": "raw",
     }
+    # Real captures carry extra hardware provenance for fine-grained search:
+    # which physical device, what gain, which antenna port produced the data.
+    if isinstance(signal, SdrCapture):
+        data_tags["sdr-serial"] = signal.serial
+        data_tags["sdr-gain"] = f"{signal.gain:.1f}"
+        data_tags["sdr-antenna"] = signal.antenna
 
     # --- 4. Upload -------------------------------------------------------
     # Meta is uploaded first: if a consumer races between the two puts, it

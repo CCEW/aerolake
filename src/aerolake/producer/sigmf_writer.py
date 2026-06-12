@@ -14,11 +14,30 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Protocol
 
+import numpy as np
 import sigmf
 from sigmf import SigMFFile
 
-from aerolake.producer.synthetic import SyntheticSignal
+
+class EncodableSignal(Protocol):
+    """Minimal interface the encoder needs from any acquisition source.
+
+    Both :class:`aerolake.producer.synthetic.SyntheticSignal` and
+    :class:`aerolake.producer.soapy_source.SdrCapture` satisfy this — the
+    encoder reads only these four attributes, so it stays agnostic to whether
+    the samples are synthetic or captured from real hardware.
+    """
+
+    @property
+    def samples(self) -> np.ndarray: ...
+    @property
+    def sample_rate(self) -> float: ...
+    @property
+    def center_freq(self) -> float: ...
+    @property
+    def description(self) -> str: ...
 
 # SigMF datatype string for np.complex64.
 # Format: complex float 32-bit little-endian. See SigMF spec, "Datatypes".
@@ -48,7 +67,7 @@ class SigMFCapture:
 
 
 def encode(
-    signal: SyntheticSignal,
+    signal: EncodableSignal,
     *,
     author: str = "AeroLake",
     recorder: str = "aerolake-producer-synthetic",

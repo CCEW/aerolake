@@ -28,6 +28,7 @@ from rich.table import Table
 from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageError
 from aerolake.producer.orchestrator import capture_and_upload
+from aerolake.producer.synthetic import SyntheticParams
 
 
 @dataclass(frozen=True)
@@ -175,9 +176,11 @@ def main(argv: list[str] | None = None) -> int:
         result = capture_and_upload(
             **params,
             duration_s=args.duration,
-            tone_offset_hz=args.tone_offset,
-            snr_db=args.snr,
-            seed=args.seed,
+            source=SyntheticParams(
+                tone_offset_hz=args.tone_offset,
+                snr_db=args.snr,
+                seed=args.seed,
+            ),
         )
     except StorageError as exc:
         console.print(f"[bold red]✗ Storage error:[/] {exc}")

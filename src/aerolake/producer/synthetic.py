@@ -42,6 +42,30 @@ class SyntheticSignal:
     description: str
 
 
+@dataclass(frozen=True)
+class SyntheticParams:
+    """Source-specific parameters for synthetic signal generation.
+
+    Groups the knobs that only make sense for the synthetic source, so the
+    orchestrator can take a single ``source`` object whose *type* selects the
+    acquisition path (synthetic vs real SDR). Real captures use
+    :class:`aerolake.producer.soapy_source.SoapyParams` instead.
+
+    Attributes
+    ----------
+    tone_offset_hz
+        Frequency of the generated tone relative to center, in Hz.
+    snr_db
+        Signal-to-noise ratio of the generated signal, in dB.
+    seed
+        Optional RNG seed for reproducible noise (useful in tests).
+    """
+
+    tone_offset_hz: float = 100_000.0
+    snr_db: float = 20.0
+    seed: int | None = None
+
+
 def generate_tone(
     duration_s: float,
     sample_rate: float,
