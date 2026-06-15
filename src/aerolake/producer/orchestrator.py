@@ -19,6 +19,7 @@ import getpass
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import structlog
 
@@ -105,12 +106,27 @@ def capture_and_upload(
         except Exception:
             operator = "unknown"
 
+    # Resolve the source early so its label can go into the human-readable
+    # folder name below (and so acquisition uses the same resolved object).
+    if source is None:
+        source = SyntheticParams()
+    source_label = source.driver if isinstance(source, SoapyParams) else "synthetic"
+
     # --- Session identification ------------------------------------------
-    # 8 hex chars = ~4 billion possibilities, plenty for our usage.
-    # We also embed the UTC date in the path so listing per-day is trivial.
+    # session_id stays an opaque unique id (used in logs, tags, CaptureResult).
+    # The folder name is made human-readable: <HHMMSS>_<source>_<session_id>,
+    # so listings sort chronologically and say at a glance what/when/which SDR.
+    # 8 hex chars = ~4 billion possibilities; the id keeps folders collision-free.
+    now_utc = datetime.now(UTC)
+    now_local = now_utc.astimezone(ZoneInfo("America/Montreal"))
     session_id = uuid.uuid4().hex[:8]
-    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-    base_key = f"{signal_type}/{date_str}/{session_id}/capture"
+    # Parent folder date stays UTC for stable, timezone-independent ordering.
+    date_str = now_utc.strftime("%Y-%m-%d")
+    # Leaf folder is fully self-describing and uses LOCAL time so it matches
+    # the operator's wall clock: <YYYY-MM-DD>_<HHhMMmSS>_<source>_<id>.
+    stamp = now_local.strftime("%Y-%m-%d_%Hh%Mm%S")
+    folder = f"{stamp}_{source_label}_{session_id}"
+    base_key = f"{signal_type}/{date_str}/{folder}/capture"
     data_key = f"{base_key}.sigmf-data"
     meta_key = f"{base_key}.sigmf-meta"
 
@@ -130,9 +146,6 @@ def capture_and_upload(
     # Annotated as the Protocol so mypy accepts either concrete type
     # (SyntheticSignal or SdrCapture) assigned in the branches below.
     signal: EncodableSignal
-    if source is None:
-        source = SyntheticParams()
-
     if isinstance(source, SoapyParams):
         signal = capture_from_sdr(
             duration_s=duration_s,
