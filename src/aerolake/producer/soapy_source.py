@@ -103,6 +103,7 @@ class SdrCapture:
     serial: str
     gain: float
     antenna: str
+    hardware_info: dict[str, str]
 
 
 def list_devices() -> list[dict[str, str]]:
@@ -166,12 +167,30 @@ def capture_from_sdr(
     # --- 1. Open the device ------------------------------------------------
     # Device(dict) selects hardware by driver key. If nothing matches, SoapySDR
     # raises; we translate that into a clear RuntimeError for the caller.
-    try:
-        device = SoapySDR.Device({"driver": driver})
-    except Exception as exc:
+    # Open by matching the *enumerated* device args, not a bare driver key.
+    # Some drivers (notably rtlsdr) reject Device({"driver": ...}) with
+    # "make() no match" even when enumerate() lists the device; opening with
+    # the full enumerated args dict is the reliable path.
+    # enumerate() yields SoapySDRKwargs objects. We must OPEN with the raw
+    # object (Device(kwargs)); converting it to a plain dict first makes
+    # make() fail with "no match". So we keep the raw object for opening and
+    # only cast to dict to read the driver key.
+    device_args = None
+    for d in SoapySDR.Device.enumerate():
+        if dict(d).get("driver") == driver:
+            device_args = d
+            break
+    if device_args is None:
         raise RuntimeError(
             f"No SDR found for driver={driver!r}. "
             f"Is it plugged in and the SoapySDR module installed? "
+            f"Visible devices: {list_devices()}"
+        )
+    try:
+        device = SoapySDR.Device(device_args)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Found a {driver!r} device but failed to open it: {exc}. "
             f"Visible devices: {list_devices()}"
         ) from exc
 
@@ -190,7 +209,10 @@ def capture_from_sdr(
         eff_gain = float(device.getGain(SOAPY_SDR_RX, channel))
         eff_antenna = str(device.getAntenna(SOAPY_SDR_RX, channel))
 
-        info = dict(device.getHardwareInfo())
+        # Hardware provenance comes from the enumeration args (serial,
+        # product, tuner, manufacturer, label), not getHardwareInfo() — the
+        # latter returns module-level info (index, origin) on SoapyRTLSDR.
+        info = dict(device_args)
         serial = info.get("serial", "unknown")
         driver_key = str(device.getDriverKey())
 
@@ -227,6 +249,7 @@ def capture_from_sdr(
         description=description,
         driver=driver_key,
         serial=serial,
+        hardware_info=info,
         gain=eff_gain,
         antenna=eff_antenna,
     )

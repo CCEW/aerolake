@@ -77,6 +77,7 @@ def encode(
     operator: str | None = None,
     location: str | None = None,
     mobile: bool | None = None,
+    hardware_info: dict[str, str] | None = None,
 ) -> SigMFCapture:
     """Encode a SyntheticSignal into SigMF byte streams.
 
@@ -134,6 +135,11 @@ def encode(
         global_block["aerolake:location"] = location
     if mobile is not None:
         global_block["aerolake:mobile"] = bool(mobile)
+    # Full hardware provenance as reported by the SDR (manufacturer,
+    # product, tuner, label, ...). Stored as a sub-object so it works for
+    # any device without knowing its keys in advance. Absent for synthetic.
+    if hardware_info:
+        global_block["aerolake:hardware_info"] = hardware_info
 
     # Declare the aerolake namespace as a SigMF extension. The spec requires
     # any custom "<name>:" field to be declared here; without this, current
