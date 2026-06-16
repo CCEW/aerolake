@@ -29,12 +29,12 @@ from dataclasses import dataclass
 
 import numpy as np
 import SoapySDR
-from SoapySDR import SOAPY_SDR_CF32, SOAPY_SDR_RX
+from SoapySDR import SOAPY_SDR_CF32, SOAPY_SDR_OVERFLOW, SOAPY_SDR_RX
 
 # SoapySDR delivers samples in bursts. We read into a working buffer of this
 # many complex samples per readStream() call. 16384 is a comfortable size:
 # large enough to keep syscall overhead low, small enough to stay responsive.
-_READ_CHUNK = 16384
+_READ_CHUNK = 65536
 
 # Per-readStream timeout in microseconds. If the device delivers nothing
 # within this window we treat it as a read error rather than blocking forever.
@@ -109,6 +109,7 @@ class SdrCapture:
     gain: float
     antenna: str
     hardware_info: dict[str, str]
+    overflow_count: int
 
 
 def list_devices() -> list[dict[str, str]]:
@@ -235,7 +236,7 @@ def capture_from_sdr(
         stream = device.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32, [channel])
         device.activateStream(stream)
         try:
-            samples = _read_n_samples(device, stream, n_target)
+            samples, overflow_count = _read_n_samples(device, stream, n_target)
             # Read the gain now, after streaming: with AGC enabled the gain
             # tracks the signal during capture, so the post-capture value is
             # the most representative one to record.
@@ -255,6 +256,7 @@ def capture_from_sdr(
         f"{eff_center_freq / 1e6:.3f} MHz, "
         f"{eff_sample_rate / 1e6:.3f} Msps, gain {eff_gain:.1f} dB, "
         f"antenna {eff_antenna}, {len(samples)} samples"
+        + (f", {overflow_count} overflow(s)" if overflow_count else "")
     )
 
     return SdrCapture(
@@ -265,6 +267,7 @@ def capture_from_sdr(
         driver=driver_key,
         serial=serial,
         hardware_info=info,
+        overflow_count=overflow_count,
         gain=eff_gain,
         antenna=eff_antenna,
     )
@@ -274,39 +277,55 @@ def _read_n_samples(
     device: SoapySDR.Device,
     stream: object,
     n_target: int,
-) -> np.ndarray:
-    """Read exactly ``n_target`` complex64 samples from an active stream.
+) -> tuple[np.ndarray, int]:
+    """Read ``n_target`` complex64 samples from an active stream.
 
     Loops over readStream(), copying each burst into a pre-allocated output
     buffer until the target is reached. Pre-allocating once (rather than
     concatenating per chunk) keeps memory predictable for long captures.
+
+    Overflows (SOAPY_SDR_OVERFLOW) are **recoverable**: the device dropped
+    some samples (typically a transient USB/host latency hiccup), but the
+    stream can keep going. We count them and continue rather than aborting,
+    so the capture still completes. The returned overflow count lets callers
+    record in the metadata whether the capture was clean (0) or has gaps (>0).
+    Other negative return codes are treated as fatal.
+
+    Returns
+    -------
+    (samples, overflow_count)
     """
     out = np.empty(n_target, dtype=np.complex64)
     chunk = np.empty(_READ_CHUNK, dtype=np.complex64)
     filled = 0
+    overflow_count = 0
 
     while filled < n_target:
         remaining = n_target - filled
         want = min(_READ_CHUNK, remaining)
 
         # readStream fills `chunk[:want]` and returns a status object whose
-        # .ret is the number of samples actually read (or a negative error).
+        # .ret is the number of samples read, or a negative SoapySDR code.
         status = device.readStream(
             stream, [chunk[:want]], want, timeoutUs=_READ_TIMEOUT_US
         )
         nread = status.ret
 
+        if nread == SOAPY_SDR_OVERFLOW:
+            # Recoverable: samples were dropped but the stream continues.
+            overflow_count += 1
+            continue
         if nread < 0:
             raise RuntimeError(
                 f"readStream failed after {filled} samples "
                 f"(SoapySDR error code {nread})"
             )
         if nread == 0:
-            # No samples this round (timeout/overflow). Retry; the loop bound
+            # No samples this round (timeout). Retry; the loop bound
             # guarantees progress as long as the device keeps delivering.
             continue
 
         out[filled : filled + nread] = chunk[:nread]
         filled += nread
 
-    return out
+    return out, overflow_count

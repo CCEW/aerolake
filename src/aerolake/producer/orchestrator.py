@@ -177,6 +177,7 @@ def capture_and_upload(
     # --- 2. Encode -------------------------------------------------------
     # Real captures carry full hardware provenance; synthetic ones don't.
     hardware_info = signal.hardware_info if isinstance(signal, SdrCapture) else None
+    overflow_count = signal.overflow_count if isinstance(signal, SdrCapture) else None
     capture = encode(
         signal,
         recorder=recorder,
@@ -187,6 +188,7 @@ def capture_and_upload(
         location=location,
         mobile=mobile,
         hardware_info=hardware_info,
+        overflow_count=overflow_count,
     )
     log.info(
         "producer.capture.encoded",

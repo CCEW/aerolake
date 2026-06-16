@@ -78,6 +78,7 @@ def encode(
     location: str | None = None,
     mobile: bool | None = None,
     hardware_info: dict[str, str] | None = None,
+    overflow_count: int | None = None,
 ) -> SigMFCapture:
     """Encode a SyntheticSignal into SigMF byte streams.
 
@@ -140,6 +141,11 @@ def encode(
     # any device without knowing its keys in advance. Absent for synthetic.
     if hardware_info:
         global_block["aerolake:hardware_info"] = hardware_info
+    # Number of stream overflows during capture: 0 means a clean, gapless
+    # recording; >0 means some samples were dropped (USB/host hiccups) and the
+    # capture may contain discontinuities. None for synthetic (not applicable).
+    if overflow_count is not None:
+        global_block["aerolake:overflow_count"] = overflow_count
 
     # Declare the aerolake namespace as a SigMF extension. The spec requires
     # any custom "<name>:" field to be declared here; without this, current
