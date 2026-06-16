@@ -40,6 +40,9 @@ _READ_CHUNK = 16384
 # within this window we treat it as a read error rather than blocking forever.
 _READ_TIMEOUT_US = 1_000_000
 
+# Fallback front-end gain (dB) used only when a device exposes no AGC.
+_FALLBACK_GAIN_DB = 40.0
+
 
 @dataclass(frozen=True)
 class SoapyParams:
@@ -54,15 +57,17 @@ class SoapyParams:
     ----------
     driver
         SoapySDR driver key selecting the hardware (``rtlsdr``, ``bladerf``).
-    gain
-        Requested overall gain in dB. GPS L1 sits below the noise floor, so a
-        high gain (and a powered active antenna) is needed to see anything.
+    agc
+        When ``True`` (default), enable the device's automatic gain control so
+        the front-end gain tracks the actual antenna/signal level. The gain the
+        AGC settled on is read back and stored in the metadata. When the device
+        has no AGC, a sensible fixed gain is applied as a fallback.
     antenna
         Optional antenna port to select. ``None`` keeps the device default.
     """
 
     driver: str = "rtlsdr"
-    gain: float = 40.0
+    agc: bool = True
     antenna: str | None = None
 
 
@@ -122,7 +127,7 @@ def capture_from_sdr(
     sample_rate: float,
     center_freq: float,
     driver: str = "rtlsdr",
-    gain: float = 40.0,
+    agc: bool = True,
     antenna: str | None = None,
     channel: int = 0,
 ) -> SdrCapture:
@@ -198,15 +203,21 @@ def capture_from_sdr(
         # --- 2. Configure the front-end ------------------------------------
         device.setSampleRate(SOAPY_SDR_RX, channel, sample_rate)
         device.setFrequency(SOAPY_SDR_RX, channel, center_freq)
-        device.setGain(SOAPY_SDR_RX, channel, gain)
+        # Gain: prefer the device AGC so the front-end tracks the antenna/signal
+        # level. If the device has no AGC, fall back to a fixed mid-range gain.
+        if agc and device.hasGainMode(SOAPY_SDR_RX, channel):
+            device.setGainMode(SOAPY_SDR_RX, channel, True)
+        else:
+            device.setGain(SOAPY_SDR_RX, channel, _FALLBACK_GAIN_DB)
         if antenna is not None:
             device.setAntenna(SOAPY_SDR_RX, channel, antenna)
 
         # Read back what the hardware actually applied. Requested != effective
         # in general; the SigMF metadata must describe reality, not intent.
+        # Note: the effective GAIN is read AFTER the capture (see below), once
+        # the AGC has settled on the real signal.
         eff_sample_rate = float(device.getSampleRate(SOAPY_SDR_RX, channel))
         eff_center_freq = float(device.getFrequency(SOAPY_SDR_RX, channel))
-        eff_gain = float(device.getGain(SOAPY_SDR_RX, channel))
         eff_antenna = str(device.getAntenna(SOAPY_SDR_RX, channel))
 
         # Hardware provenance comes from the enumeration args (serial,
@@ -225,6 +236,10 @@ def capture_from_sdr(
         device.activateStream(stream)
         try:
             samples = _read_n_samples(device, stream, n_target)
+            # Read the gain now, after streaming: with AGC enabled the gain
+            # tracks the signal during capture, so the post-capture value is
+            # the most representative one to record.
+            eff_gain = float(device.getGain(SOAPY_SDR_RX, channel))
         finally:
             # Always tear the stream down, even on read failure, so the device
             # is left unlocked for the next capture.

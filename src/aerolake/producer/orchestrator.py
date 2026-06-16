@@ -152,7 +152,7 @@ def capture_and_upload(
             sample_rate=sample_rate,
             center_freq=center_freq,
             driver=source.driver,
-            gain=source.gain,
+            agc=source.agc,
             antenna=source.antenna,
         )
         recorder = "aerolake-producer-soapy"

@@ -38,7 +38,7 @@ from rich.table import Table
 from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageError
 from aerolake.producer.orchestrator import capture_and_upload
-from aerolake.producer.soapy_source import SoapyParams
+from aerolake.producer.soapy_source import SoapyParams, list_devices
 from aerolake.producer.synthetic import SyntheticParams
 
 
@@ -102,36 +102,64 @@ def _ask_signal(console: Console) -> dict:
     }
 
 
-def _ask_source(console: Console) -> SyntheticParams | SoapyParams:
-    """Numbered menu for the acquisition source.
+def _device_label(dev: dict[str, str]) -> str:
+    """Build a human-readable one-liner for a detected SDR.
 
-    Synthetic needs no hardware and is the safe default. The real-SDR
-    entries map to SoapySDR driver keys; picking one asks only for the
-    gain (the one knob that varies per band/antenna), keeping the guided
-    flow short. The antenna port stays on the device default.
+    Falls back gracefully when a field is missing: different drivers expose
+    different keys (RTL-SDR has product/serial, others may not).
     """
+    driver = dev.get("driver", "?")
+    name = dev.get("product") or dev.get("label") or dev.get("manufacturer") or ""
+    serial = dev.get("serial", "")
+    parts = [p for p in (name, f"serial {serial}" if serial else "") if p]
+    return f"{driver} — {', '.join(parts)}" if parts else driver
+
+
+def _ask_source(console: Console) -> SyntheticParams | SoapyParams:
+    """Hybrid menu for the acquisition source.
+
+    Synthetic is always offered (no hardware, safe default). Real SDRs are
+    discovered dynamically via SoapySDR enumeration, so any supported device
+    — RTL-SDR, BladeRF, HackRF, LimeSDR, USRP, ... — shows up automatically
+    once plugged in, with no code change. A final manual entry lets the user
+    type a driver key for a device that does not enumerate cleanly. Picking a
+    real source asks only for the gain; the antenna port stays on the default.
+    """
+    detected = list_devices()
+
     console.print("\n[bold]Signal source?[/]")
     console.print("  [cyan]1[/] Synthetic (no hardware needed)")
-    console.print("  [cyan]2[/] Real SDR — RTL-SDR")
-    console.print("  [cyan]3[/] Real SDR — BladeRF")
-    pick = Prompt.ask("Your choice", choices=["1", "2", "3"], default="1")
+
+    if detected:
+        console.print("\n  [dim]Detected SDRs:[/]")
+        for i, dev in enumerate(detected, start=2):
+            console.print(f"  [cyan]{i}[/] {_device_label(dev)}")
+    else:
+        console.print("  [dim](no SDR detected)[/]")
+
+    manual_index = len(detected) + 2
+    console.print(f"  [cyan]{manual_index}[/] Other / manual (enter a driver key)")
+
+    valid = [str(i) for i in range(1, manual_index + 1)]
+    pick = Prompt.ask("Your choice", choices=valid, default="1")
 
     if pick == "1":
         return SyntheticParams()
 
-    driver = "rtlsdr" if pick == "2" else "bladerf"
-    gain = FloatPrompt.ask(
-        "  Gain in dB (GPS L1 with an active antenna needs a high gain)",
-        default=40.0,
-    )
-    return SoapyParams(driver=driver, gain=gain)
+    if pick == str(manual_index):
+        driver = Prompt.ask("  Driver key (e.g. rtlsdr, bladerf, hackrf)").strip()
+        return SoapyParams(driver=driver)
+
+    # A detected SDR was chosen: map the menu index back to its driver.
+    dev = detected[int(pick) - 2]
+    return SoapyParams(driver=dev.get("driver", ""))
 
 
 def _ask_mobile(console: Console) -> bool:
     """Two-choice fixed/mobile question — no free text, no inconsistency."""
-    console.print("\n[bold]Was the acquisition fixed or mobile?[/]")
-    console.print("  [cyan]1[/] Fixed")
-    console.print("  [cyan]2[/] Mobile")
+    console.print("\n[bold]Was the acquisition static or dynamic?[/]")
+    console.print("  [cyan]1[/] Static")
+    console.print("  [cyan]2[/] Dynamic")
     return Prompt.ask("Your choice", choices=["1", "2"], default="1") == "2"
 
 
@@ -186,10 +214,10 @@ def main(argv: list[str] | None = None) -> int:
     recap.add_row("Frequency", f"{signal['center_freq']/1e6:.3f} MHz")
     recap.add_row("Sample rate", f"{signal['sample_rate']/1e6:.1f} MS/s")
     recap.add_row("Duration", f"{duration_s} s")
-    recap.add_row("Mobile", "yes" if mobile else "no")
+    recap.add_row("Motion", "dynamic" if mobile else "static")
     recap.add_row("Location", location or "(not specified)")
     if isinstance(source, SoapyParams):
-        recap.add_row("Source", f"Real SDR ({source.driver}, gain {source.gain:.0f} dB)")
+        recap.add_row("Source", f"Real SDR ({source.driver}, AGC)")
     else:
         recap.add_row("Source", "Synthetic")
     console.print(recap)
