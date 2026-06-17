@@ -1,0 +1,15 @@
+{
+  "signal_type": "gnss_l1",
+  "center_freq": 1575420000,
+  "sample_rate": 2000000,
+  "duration_s": 10,
+  "source": {
+    "type": "soapy",
+    "driver": "bladerf",
+    "agc": true
+  },
+  "location": {
+    "name": "LASSENA rooftop",
+    "mobile": false
+  }
+}

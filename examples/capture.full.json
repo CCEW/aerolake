@@ -1,0 +1,52 @@
+{
+  "signal_type": "gnss_l1",
+  "signal_type_detail": "L1 C/A",
+  "center_freq": 1575420000,
+  "sample_rate": 2000000,
+  "duration_s": 10,
+
+  "source": {
+    "type": "soapy",
+    "driver": "bladerf",
+    "agc": true,
+    "antenna": "RX2"
+  },
+
+  "author": "Theo Schmitt <theo@lassena>",
+  "description": "GPS L1 capture, clear sky, active antenna on the rooftop",
+  "license": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "operator": "schmitt",
+
+  "location": {
+    "name": "LASSENA rooftop",
+    "mobile": false,
+    "geolocation": {
+      "latitude": 45.4946,
+      "longitude": -73.5623,
+      "altitude": 50.0
+    }
+  },
+
+  "annotation": {
+    "label": "GPS L1 C/A",
+    "comment": "Test antenne active, ciel degage",
+    "freq_lower_edge": 1574420000,
+    "freq_upper_edge": 1576420000
+  },
+
+  "antenna": {
+    "model": "Tallysman TW3742",
+    "type": "active GNSS patch",
+    "low_frequency": 1525000000,
+    "high_frequency": 1610000000,
+    "gain": 28.0,
+    "cable_loss": 2.0,
+    "voltage_standing_wave_ratio": 1.5,
+    "steerable": false,
+    "mobile": false,
+    "hagl": 1.5,
+    "polarization": "right-hand circular",
+    "azimuth_angle": 90.0,
+    "elevation_angle": 45.0
+  }
+}
