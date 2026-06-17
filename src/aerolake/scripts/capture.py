@@ -1,27 +1,31 @@
 """File-driven capture for AeroLake (``aerolake-capture --config x.json``).
 
 The declarative counterpart to the interactive ``aerolake-record`` menu: a
-capture is described once in a JSON file, validated, and replayed without any
-prompts. This is the path meant to become the standard way to record -- a
-config file is reviewable, version-controllable, and reproducible, where a
-menu session is not.
+capture is described once in a JSON file, validated, and replayed. This is the
+path meant to become the standard way to record -- a config file is reviewable,
+version-controllable, and reproducible, where a menu session is not.
 
-Scope of this step
-------------------
-A validated :class:`CaptureConfig` is mapped onto :func:`capture_and_upload`.
-The descriptive fields (author, description, license, geolocation, annotation,
-antenna) are flattened into a :class:`RichMetadata` and threaded all the way to
-the SigMF encoder, so everything the user declares lands in the stored
-``.sigmf-meta`` (and the two richest criteria -- location, antenna model --
-also become searchable S3 tags). Push to MinIO stays automatic here; the
-deliberate "validate before push" confirmation is a later step.
+Flow
+----
+A validated :class:`CaptureConfig` is mapped onto the orchestrator. The
+descriptive fields (author, description, license, geolocation, annotation,
+antenna) are flattened into a :class:`RichMetadata` so everything the user
+declares lands in the stored ``.sigmf-meta`` (and the two richest criteria --
+location, antenna model -- also become searchable S3 tags).
+
+The capture is *prepared* (acquired + encoded) but nothing is stored until the
+operator confirms: a post-capture summary is shown, then "Push to MinIO?". This
+deliberate step guards the lakehouse against an acquisition launched and
+forgotten. If the operator declines the push, they are offered to keep the
+capture on disk (under ``captures/``) so a long recording is not lost;
+declining both discards it.
 
 Exit codes
 ----------
-0 : Capture uploaded successfully.
+0 : Capture uploaded, saved locally, or intentionally discarded.
 1 : Storage layer failure (MinIO unreachable, bucket missing, etc.).
 2 : Configuration error (bad path, malformed JSON, schema violation).
-3 : Unexpected error.
+3 : Capture or unexpected error.
 """
 
 from __future__ import annotations
@@ -30,13 +34,19 @@ import argparse
 import sys
 
 from rich.console import Console
+from rich.prompt import Confirm
 from rich.table import Table
 
 from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageError
 from aerolake.producer.capture_config import CaptureConfig
 from aerolake.producer.config_loader import ConfigError, load_capture_config
-from aerolake.producer.orchestrator import RichMetadata, capture_and_upload
+from aerolake.producer.orchestrator import (
+    RichMetadata,
+    prepare_capture,
+    push_capture,
+    save_capture_locally,
+)
 from aerolake.producer.sigmf_writer import AnnotationFields, AntennaFields
 from aerolake.producer.soapy_source import SoapyParams
 
@@ -153,17 +163,13 @@ def main(argv: list[str] | None = None) -> int:
     console.print("[bold cyan]AeroLake — capture from config[/]")
     console.print(_summary_table(config))
 
-    # --- Map to the existing engine --------------------------------------
-    # Only the fields capture_and_upload already understands are forwarded.
-    # Richer config fields (author/description/license/geolocation/annotation/
-    # antenna) are validated and available on `config` but threaded into the
-    # encoder in a later step.
+    # --- Prepare (capture + encode), store nothing yet -------------------
     location_name = config.location.name if config.location is not None else None
     mobile = config.location.mobile if config.location is not None else False
 
     console.print("\n[bold cyan]>[/] Recording...")
     try:
-        result = capture_and_upload(
+        prepared = prepare_capture(
             signal_type=config.signal_type,
             signal_type_detail=config.signal_type_detail,
             duration_s=config.duration_s,
@@ -175,21 +181,61 @@ def main(argv: list[str] | None = None) -> int:
             mobile=mobile,
             rich=_build_rich_metadata(config),
         )
-    except StorageError as exc:
-        console.print(f"[bold red]✗ Storage error:[/] {exc}")
-        return 1
     except Exception as exc:
-        console.print(f"[bold red]✗ Unexpected error:[/] {exc}")
+        console.print(f"[bold red]✗ Capture error:[/] {exc}")
         return 3
 
-    console.print("[bold green]✓ Capture recorded[/]")
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column(style="cyan")
-    table.add_column()
-    table.add_row("Session ID", result.session_id)
-    table.add_row("Data key", result.data_key)
-    table.add_row("Samples", f"{result.sample_count:,}")
-    console.print(table)
+    # --- Post-capture summary --------------------------------------------
+    # Show what was actually recorded so the operator decides in full
+    # knowledge before anything reaches MinIO. This is the guard against an
+    # acquisition launched and forgotten silently filling the lakehouse.
+    recap = Table(show_header=False, box=None, padding=(0, 2))
+    recap.add_column(style="cyan")
+    recap.add_column()
+    recap.add_row("Samples", f"{prepared.sample_count:,}")
+    recap.add_row("Size", f"{prepared.size_bytes / 1e6:.1f} MB")
+    actual_duration = (
+        prepared.sample_count / config.sample_rate if config.sample_rate else 0.0
+    )
+    recap.add_row("Duration", f"{actual_duration:.2f} s")
+    if prepared.overflow_count is not None:
+        recap.add_row("Overflows", str(prepared.overflow_count))
+    console.print("\n[bold]Captured[/]")
+    console.print(recap)
+
+    # --- Deliberate push (the validate-before-upload guard) --------------
+    if Confirm.ask("\nPush this capture to MinIO?", default=True):
+        try:
+            result = push_capture(prepared)
+        except StorageError as exc:
+            console.print(f"[bold red]✗ Storage error:[/] {exc}")
+            return 1
+        except Exception as exc:
+            console.print(f"[bold red]✗ Unexpected error:[/] {exc}")
+            return 3
+
+        console.print("[bold green]✓ Capture uploaded[/]")
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column(style="cyan")
+        table.add_column()
+        table.add_row("Session ID", result.session_id)
+        table.add_row("Data key", result.data_key)
+        table.add_row("Samples", f"{result.sample_count:,}")
+        console.print(table)
+        return 0
+
+    # Not pushed: offer to keep it on disk so a (possibly long) capture is not
+    # lost. Declining both simply discards the in-memory capture.
+    if Confirm.ask("Keep it locally instead?", default=True):
+        try:
+            out_dir = save_capture_locally(prepared)
+        except OSError as exc:
+            console.print(f"[bold red]✗ Could not save locally:[/] {exc}")
+            return 3
+        console.print(f"[bold green]✓ Saved locally:[/] {out_dir}")
+        return 0
+
+    console.print("[yellow]Discarded — nothing was stored.[/]")
     return 0
 
 

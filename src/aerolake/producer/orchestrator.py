@@ -19,6 +19,7 @@ import getpass
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -66,6 +67,50 @@ class CaptureResult:
 
 
 @dataclass(frozen=True)
+class PreparedCapture:
+    """A captured, encoded SigMF recording ready to push or save — not yet stored.
+
+    This is the output of :func:`prepare_capture`: everything needed to either
+    upload to MinIO (:func:`push_capture`) or write to disk
+    (:func:`save_capture_locally`), plus a human-readable summary so a CLI can
+    show the operator what was recorded *before* deciding to keep it. Splitting
+    "prepare" from "push" is what makes a validate-before-upload confirmation
+    possible: the bytes exist in memory, but nothing has been stored yet.
+
+    Attributes
+    ----------
+    session_id
+        Short unique identifier for this capture (8-char hex).
+    data_key, meta_key
+        The S3 keys the capture would occupy (also reused as the relative path
+        when saving locally).
+    data_bytes, meta_bytes
+        The encoded ``.sigmf-data`` and ``.sigmf-meta`` payloads.
+    data_metadata, data_tags
+        HTTP metadata and S3 tags to attach to the data object on upload.
+    sample_count
+        Number of complex IQ samples captured.
+    overflow_count
+        Stream overflows during capture (0 = clean; None = synthetic / N/A).
+    """
+
+    session_id: str
+    data_key: str
+    meta_key: str
+    data_bytes: bytes
+    meta_bytes: bytes
+    data_metadata: dict[str, str]
+    data_tags: dict[str, str]
+    sample_count: int
+    overflow_count: int | None
+
+    @property
+    def size_bytes(self) -> int:
+        """Total payload size (data + meta), for the pre-push summary."""
+        return len(self.data_bytes) + len(self.meta_bytes)
+
+
+@dataclass(frozen=True)
 class RichMetadata:
     """Optional descriptive metadata threaded from a capture config to SigMF.
 
@@ -96,7 +141,7 @@ class RichMetadata:
     antenna: AntennaFields | None = None
 
 
-def capture_and_upload(
+def prepare_capture(
     *,
     signal_type: str,
     duration_s: float,
@@ -108,33 +153,16 @@ def capture_and_upload(
     location: str | None = None,
     mobile: bool = False,
     rich: RichMetadata | None = None,
-    storage_client: StorageClient | None = None,
-) -> CaptureResult:
-    """Generate a synthetic capture and upload it as SigMF in MinIO.
+) -> PreparedCapture:
+    """Acquire, encode, and assemble a capture — without storing anything.
 
-    Parameters
-    ----------
-    signal_type
-        Short identifier used as the top-level prefix in the bucket
-        (e.g. ``gnss_l1``, ``iridium``, ``starlink``).
-    duration_s
-        Capture duration in seconds.
-    sample_rate
-        Sample rate in Hz.
-    center_freq
-        Center frequency in Hz (used for SigMF metadata).
-    tone_offset_hz, snr_db, seed
-        Forwarded to :func:`generate_tone`.
-    storage_client
-        Optional injected StorageClient for tests; defaults to a fresh
-        instance using the configured environment.
+    Runs acquisition (synthetic or real SDR), SigMF encoding, and metadata/tag
+    assembly, then returns a :class:`PreparedCapture` holding the bytes and the
+    keys they would occupy. Nothing is uploaded or written to disk here, so a
+    caller can inspect the result and decide whether to keep it.
 
-    Returns
-    -------
-    CaptureResult
+    Parameters mirror :func:`capture_and_upload` (minus the storage client).
     """
-    client = storage_client or StorageClient()
-
     # Operator defaults to the session account. Each user has their own login,
     # so this identifies "who recorded" with no manual entry and no typos.
     if operator is None:
@@ -240,7 +268,7 @@ def capture_and_upload(
         meta_bytes=len(capture.meta_bytes),
     )
 
-# --- 3. Build metadata and tags --------------------------------------
+    # --- 3. Build metadata and tags --------------------------------------
     # HTTP metadata: technical values needed by the consumer to interpret
     # the bytes. Accessible via HEAD without downloading anything.
     # Stored as x-amz-meta-* headers.
@@ -279,32 +307,121 @@ def capture_and_upload(
     if rich.antenna and rich.antenna.get("model"):
         data_tags["antenna-model"] = str(rich.antenna["model"])
 
-    # --- 4. Upload -------------------------------------------------------
+    return PreparedCapture(
+        session_id=session_id,
+        data_key=data_key,
+        meta_key=meta_key,
+        data_bytes=capture.data_bytes,
+        meta_bytes=capture.meta_bytes,
+        data_metadata=data_metadata,
+        data_tags=data_tags,
+        sample_count=len(signal.samples),
+        overflow_count=overflow_count,
+    )
+
+
+def push_capture(
+    prepared: PreparedCapture,
+    storage_client: StorageClient | None = None,
+) -> CaptureResult:
+    """Upload an already-prepared capture to MinIO.
+
+    The second half of the split: takes the bytes/keys/tags from
+    :func:`prepare_capture` and performs the two uploads. Kept separate so a
+    caller can interpose a confirmation step between preparing and pushing.
+    """
+    client = storage_client or StorageClient()
+
+    # --- Upload ----------------------------------------------------------
     # Meta is uploaded first: if a consumer races between the two puts, it
     # sees the .sigmf-meta JSON (interpretable on its own) rather than
     # orphan bytes. The .sigmf-data carries both metadata and tags; the
     # .sigmf-meta does not (the JSON itself is the description).
     client.upload_bytes(
-        meta_key,
-        capture.meta_bytes,
+        prepared.meta_key,
+        prepared.meta_bytes,
         content_type="application/json",
     )
     client.upload_bytes(
-        data_key,
-        capture.data_bytes,
+        prepared.data_key,
+        prepared.data_bytes,
         content_type="application/octet-stream",
-        metadata=data_metadata,
-        tags=data_tags,
+        metadata=prepared.data_metadata,
+        tags=prepared.data_tags,
     )
-    log.info(
+    logger.info(
         "producer.capture.uploaded",
-        data_key=data_key,
-        meta_key=meta_key,
+        data_key=prepared.data_key,
+        meta_key=prepared.meta_key,
     )
     return CaptureResult(
-        session_id=session_id,
-        data_key=data_key,
-        meta_key=meta_key,
-        sample_count=len(signal.samples),
-        bytes_uploaded=len(capture.data_bytes) + len(capture.meta_bytes),
+        session_id=prepared.session_id,
+        data_key=prepared.data_key,
+        meta_key=prepared.meta_key,
+        sample_count=prepared.sample_count,
+        bytes_uploaded=prepared.size_bytes,
     )
+
+
+def save_capture_locally(
+    prepared: PreparedCapture,
+    root: str | Path = "captures",
+) -> Path:
+    """Write a prepared capture to disk instead of (or before) uploading.
+
+    Mirrors the MinIO key layout under ``root`` so a locally-kept capture has
+    the same self-describing folder name as it would in the bucket. Returns the
+    directory the two SigMF files were written to.
+
+    Used as the "keep it on disk" branch when the operator declines the push:
+    the capture (possibly a long one) is not lost, and can be ingested later.
+    """
+    # data_key looks like "<signal>/<date>/<folder>/capture.sigmf-data"; reuse
+    # that relative path under the local root so layout matches the bucket.
+    rel_dir = Path(prepared.data_key).parent
+    out_dir = Path(root) / rel_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    data_path = out_dir / Path(prepared.data_key).name
+    meta_path = out_dir / Path(prepared.meta_key).name
+    data_path.write_bytes(prepared.data_bytes)
+    meta_path.write_bytes(prepared.meta_bytes)
+
+    logger.info("producer.capture.saved_local", path=str(out_dir))
+    return out_dir
+
+
+def capture_and_upload(
+    *,
+    signal_type: str,
+    duration_s: float,
+    sample_rate: float,
+    center_freq: float,
+    source: SyntheticParams | SoapyParams | None = None,
+    signal_type_detail: str | None = None,
+    operator: str | None = None,
+    location: str | None = None,
+    mobile: bool = False,
+    rich: RichMetadata | None = None,
+    storage_client: StorageClient | None = None,
+) -> CaptureResult:
+    """Capture and upload in one call (prepare + push).
+
+    Unchanged behavior for callers that want the whole cycle at once
+    (``aerolake-producer``, ``aerolake-record``). The file-driven CLI uses
+    :func:`prepare_capture` and :func:`push_capture` separately so it can ask
+    for confirmation before storing.
+    """
+    prepared = prepare_capture(
+        signal_type=signal_type,
+        duration_s=duration_s,
+        sample_rate=sample_rate,
+        center_freq=center_freq,
+        source=source,
+        signal_type_detail=signal_type_detail,
+        operator=operator,
+        location=location,
+        mobile=mobile,
+        rich=rich,
+    )
+    return push_capture(prepared, storage_client)
