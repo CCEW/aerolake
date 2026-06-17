@@ -1,9 +1,9 @@
 """File-driven capture for AeroLake (``aerolake-capture --config x.json``).
 
-The declarative counterpart to the interactive ``aerolake-record`` menu: a
-capture is described once in a JSON file, validated, and replayed. This is the
-path meant to become the standard way to record -- a config file is reviewable,
-version-controllable, and reproducible, where a menu session is not.
+The standard way to record: a capture is described once in a JSON file,
+validated, and replayed. A config file is reviewable, version-controllable, and
+reproducible. (For quick command-line captures without a JSON file, the
+flag-driven ``aerolake-producer`` remains available.)
 
 Flow
 ----

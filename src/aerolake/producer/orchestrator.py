@@ -408,7 +408,7 @@ def capture_and_upload(
     """Capture and upload in one call (prepare + push).
 
     Unchanged behavior for callers that want the whole cycle at once
-    (``aerolake-producer``, ``aerolake-record``). The file-driven CLI uses
+    (``aerolake-producer``). The file-driven ``aerolake-capture`` uses
     :func:`prepare_capture` and :func:`push_capture` separately so it can ask
     for confirmation before storing.
     """
