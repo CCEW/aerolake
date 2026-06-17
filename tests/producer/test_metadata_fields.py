@@ -150,3 +150,80 @@ def test_capture_metadata_reaches_sigmf(
     assert g["aerolake:operator"] == "schmitt"
     assert g["aerolake:location"] == "lab_a"
     assert g["aerolake:mobile"] is False
+
+
+# ---------------------------------------------------------------------------
+# Palier 3: rich metadata end-to-end (orchestrator -> MinIO)
+# ---------------------------------------------------------------------------
+
+
+def test_rich_metadata_reaches_sigmf_and_tags(
+    storage_client: StorageClient,
+) -> None:
+    from aerolake.producer.orchestrator import RichMetadata
+
+    rich = RichMetadata(
+        author="Theo Schmitt",
+        description="Capture GPS L1 LASSENA rooftop",
+        license="https://creativecommons.org/licenses/by-sa/4.0/",
+        geolocation={"type": "Point", "coordinates": [-73.5623, 45.4946, 50.0]},
+        annotation={
+            "label": "GPS L1 C/A",
+            "freq_lower_edge": 1_574_420_000.0,
+            "freq_upper_edge": 1_576_420_000.0,
+            "polarization": "right-hand circular",
+        },
+        antenna={"model": "Tallysman TW3742", "gain": 28.0},
+    )
+    result = capture_and_upload(
+        signal_type="gnss_l1",
+        duration_s=0.01,
+        sample_rate=2_000_000,
+        center_freq=1_575_420_000,
+        operator="schmitt",
+        location="LASSENA rooftop",
+        mobile=False,
+        rich=rich,
+        storage_client=storage_client,
+    )
+
+    meta = json.loads(storage_client.download_bytes(result.meta_key))
+    g = meta["global"]
+    assert g["core:author"] == "Theo Schmitt"
+    assert g["core:description"] == "Capture GPS L1 LASSENA rooftop"
+    assert g["core:license"] == "https://creativecommons.org/licenses/by-sa/4.0/"
+    assert g["antenna:model"] == "Tallysman TW3742"
+    assert g["antenna:gain"] == 28.0
+    # geolocation in the capture segment, annotation populated.
+    assert meta["captures"][0]["core:geolocation"]["coordinates"] == [
+        -73.5623,
+        45.4946,
+        50.0,
+    ]
+    ann = meta["annotations"][0]
+    assert ann["core:label"] == "GPS L1 C/A"
+    assert ann["antenna:polarization"] == "right-hand circular"
+    # The two new searchable tags.
+    reader = CaptureReader(storage_client)
+    tags = reader.inspect(result.data_key).tags
+    assert tags["location"] == "LASSENA rooftop"
+    assert tags["antenna-model"] == "Tallysman TW3742"
+
+
+def test_no_rich_metadata_keeps_capture_minimal(
+    storage_client: StorageClient,
+) -> None:
+    # Without rich metadata, no antenna/geolocation tags or blocks appear.
+    result = capture_and_upload(
+        signal_type="gnss_l1",
+        duration_s=0.01,
+        sample_rate=2_000_000,
+        center_freq=1_575_420_000,
+        storage_client=storage_client,
+    )
+    meta = json.loads(storage_client.download_bytes(result.meta_key))
+    assert meta["annotations"] == []
+    assert "core:geolocation" not in meta["captures"][0]
+    reader = CaptureReader(storage_client)
+    tags = reader.inspect(result.data_key).tags
+    assert "antenna-model" not in tags

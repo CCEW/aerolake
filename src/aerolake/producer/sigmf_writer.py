@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, TypedDict
 
 import numpy as np
 import sigmf
@@ -38,6 +38,48 @@ class EncodableSignal(Protocol):
     def center_freq(self) -> float: ...
     @property
     def description(self) -> str: ...
+
+
+class AnnotationFields(TypedDict, total=False):
+    """Flattened annotation fields the encoder writes into ``annotations``.
+
+    All optional. The encoder emits an annotation segment covering the whole
+    capture only if at least one of these is present. ``label``/``comment`` and
+    the ``freq_*_edge`` pair are core SigMF; the ``antenna:*`` keys belong in
+    Annotations per the spec (not the Global antenna block), so they ride here.
+    """
+
+    label: str
+    comment: str
+    freq_lower_edge: float
+    freq_upper_edge: float
+    polarization: str
+    azimuth_angle: float
+    elevation_angle: float
+
+
+class AntennaFields(TypedDict, total=False):
+    """Flattened scalar fields of the SigMF ``antenna:`` extension (Global).
+
+    All optional except that, by construction upstream, ``model`` is always
+    present when an antenna block exists (the spec's required field). The
+    encoder maps each key to ``antenna:<key>`` in the Global Object and
+    declares the ``antenna`` extension in ``core:extensions``.
+    """
+
+    model: str
+    type: str
+    low_frequency: float
+    high_frequency: float
+    gain: float
+    horizontal_beam_width: float
+    vertical_beam_width: float
+    cross_polar_discrimination: float
+    voltage_standing_wave_ratio: float
+    cable_loss: float
+    steerable: bool
+    mobile: bool
+    hagl: float
 
 # SigMF datatype string for np.complex64.
 # Format: complex float 32-bit little-endian. See SigMF spec, "Datatypes".
@@ -79,6 +121,11 @@ def encode(
     mobile: bool | None = None,
     hardware_info: dict[str, str] | None = None,
     overflow_count: int | None = None,
+    description: str | None = None,
+    license: str | None = None,
+    geolocation: dict[str, object] | None = None,
+    annotation: AnnotationFields | None = None,
+    antenna: AntennaFields | None = None,
 ) -> SigMFCapture:
     """Encode a SyntheticSignal into SigMF byte streams.
 
@@ -119,13 +166,16 @@ def encode(
         "core:datatype": SIGMF_DATATYPE_CF32_LE,
         "core:sample_rate": sample_rate,
         "core:author": author,
-        "core:description": signal.description,
+        "core:description": description if description is not None else signal.description,
         "core:recorder": recorder,
         "core:hw": hardware,
         "core:version": SIGMF_VERSION,
         "aerolake:duration_s": duration_s,
         "aerolake:sample_count": len(signal.samples),
     }
+    # A license URL is optional; include it only when the user supplied one.
+    if license is not None:
+        global_block["core:license"] = license
     if signal_type is not None:
         global_block["aerolake:signal_type"] = signal_type
     if signal_type_detail is not None:
@@ -147,24 +197,77 @@ def encode(
     if overflow_count is not None:
         global_block["aerolake:overflow_count"] = overflow_count
 
+    # Antenna extension (Global scope): map each supplied scalar to
+    # antenna:<key>. The model is the spec's required field and is always
+    # present when an antenna block exists. Booleans are normalized.
+    antenna_used = bool(antenna)
+    if antenna:
+        for key, value in antenna.items():
+            if value is not None:
+                global_block[f"antenna:{key}"] = value
+
+    # The antenna extension is also "in use" if pointing fields ride in the
+    # annotation (polarization/azimuth/elevation are antenna:* keys). Declare
+    # it whenever any antenna:* key appears anywhere, or the file is
+    # non-compliant (undeclared extension in use).
+    antenna_in_annotation = annotation is not None and any(
+        k in annotation for k in ("polarization", "azimuth_angle", "elevation_angle")
+    )
+
     # Declare the aerolake namespace as a SigMF extension. The spec requires
     # any custom "<name>:" field to be declared here; without this, current
     # SigMF warns and future versions reject the file. optional=True: readers
     # that don't know the extension can still decode the IQ.
-    global_block["core:extensions"] = [
+    extensions: list[dict[str, object]] = [
         {"name": "aerolake", "version": "1.0.0", "optional": True}
     ]
+    # The antenna extension is canonical in SigMF; declare it too whenever any
+    # antenna field is present (Global scalars or annotation pointing), so the
+    # antenna:* keys are spec-compliant.
+    if antenna_used or antenna_in_annotation:
+        extensions.append({"name": "antenna", "version": "1.0.0", "optional": True})
+    global_block["core:extensions"] = extensions
+
+    # --- Captures segment -------------------------------------------------
+    # frequency and datetime were already standard here. geolocation is the
+    # spec's preferred scope for position (over the Global object), so it goes
+    # in the capture segment when provided. SigMF requires the UTC offset to be
+    # written as "Z", not "+00:00".
+    capture_segment: dict[str, object] = {
+        "core:sample_start": 0,
+        "core:frequency": float(signal.center_freq),
+        "core:datetime": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    if geolocation is not None:
+        capture_segment["core:geolocation"] = geolocation
+
+    # --- Annotations ------------------------------------------------------
+    # A single annotation covering the whole capture is emitted only if the
+    # user supplied any annotation field. sample_start/sample_count anchor it
+    # to the full recording. The freq edges are a pair (both or neither,
+    # enforced upstream). polarization/azimuth/elevation live here per spec.
+    annotations: list[dict[str, object]] = []
+    if annotation:
+        ann_segment: dict[str, object] = {
+            "core:sample_start": 0,
+            "core:sample_count": len(signal.samples),
+        }
+        if "label" in annotation:
+            ann_segment["core:label"] = annotation["label"]
+        if "comment" in annotation:
+            ann_segment["core:comment"] = annotation["comment"]
+        if "freq_lower_edge" in annotation and "freq_upper_edge" in annotation:
+            ann_segment["core:freq_lower_edge"] = annotation["freq_lower_edge"]
+            ann_segment["core:freq_upper_edge"] = annotation["freq_upper_edge"]
+        for ant_key in ("polarization", "azimuth_angle", "elevation_angle"):
+            if ant_key in annotation:
+                ann_segment[f"antenna:{ant_key}"] = annotation[ant_key]
+        annotations.append(ann_segment)
 
     metadata = {
         "global": global_block,
-        "captures": [
-            {
-                "core:sample_start": 0,
-                "core:frequency": float(signal.center_freq),
-                "core:datetime": datetime.now(UTC).isoformat(),
-            }
-        ],
-        "annotations": [],
+        "captures": [capture_segment],
+        "annotations": annotations,
     }
 
     # --- 3. Validate against the SigMF schema ------------------------------

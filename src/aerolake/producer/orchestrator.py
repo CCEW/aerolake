@@ -24,7 +24,12 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from aerolake.common.storage import StorageClient
-from aerolake.producer.sigmf_writer import EncodableSignal, encode
+from aerolake.producer.sigmf_writer import (
+    AnnotationFields,
+    AntennaFields,
+    EncodableSignal,
+    encode,
+)
 from aerolake.producer.soapy_source import (
     SdrCapture,
     SoapyParams,
@@ -60,6 +65,37 @@ class CaptureResult:
     bytes_uploaded: int
 
 
+@dataclass(frozen=True)
+class RichMetadata:
+    """Optional descriptive metadata threaded from a capture config to SigMF.
+
+    Groups the fields that are not needed to *perform* a capture but enrich the
+    stored ``.sigmf-meta`` (and, for a couple of them, the searchable S3 tags).
+    Kept neutral on purpose: the orchestrator stays unaware of the CLI-level
+    CaptureConfig: the CLI builds this object and hands it over. Every field is
+    optional; absent ones are simply not written.
+
+    Attributes
+    ----------
+    author, description, license
+        SigMF ``core:`` Global fields (free text / URL).
+    geolocation
+        RFC 7946 GeoJSON Point, written to the capture segment.
+    annotation
+        Flattened annotation fields (label/comment/freq edges + antenna
+        pointing) for the single whole-capture annotation segment.
+    antenna
+        Flattened scalar fields of the SigMF ``antenna:`` extension (Global).
+    """
+
+    author: str | None = None
+    description: str | None = None
+    license: str | None = None
+    geolocation: dict[str, object] | None = None
+    annotation: AnnotationFields | None = None
+    antenna: AntennaFields | None = None
+
+
 def capture_and_upload(
     *,
     signal_type: str,
@@ -71,6 +107,7 @@ def capture_and_upload(
     operator: str | None = None,
     location: str | None = None,
     mobile: bool = False,
+    rich: RichMetadata | None = None,
     storage_client: StorageClient | None = None,
 ) -> CaptureResult:
     """Generate a synthetic capture and upload it as SigMF in MinIO.
@@ -178,8 +215,10 @@ def capture_and_upload(
     # Real captures carry full hardware provenance; synthetic ones don't.
     hardware_info = signal.hardware_info if isinstance(signal, SdrCapture) else None
     overflow_count = signal.overflow_count if isinstance(signal, SdrCapture) else None
+    rich = rich or RichMetadata()
     capture = encode(
         signal,
+        author=rich.author if rich.author is not None else "AeroLake",
         recorder=recorder,
         hardware=hardware,
         signal_type=signal_type,
@@ -189,6 +228,11 @@ def capture_and_upload(
         mobile=mobile,
         hardware_info=hardware_info,
         overflow_count=overflow_count,
+        description=rich.description,
+        license=rich.license,
+        geolocation=rich.geolocation,
+        annotation=rich.annotation,
+        antenna=rich.antenna,
     )
     log.info(
         "producer.capture.encoded",
@@ -225,6 +269,15 @@ def capture_and_upload(
         data_tags["sdr-serial"] = signal.serial
         data_tags["sdr-gain"] = f"{signal.gain:.1f}"
         data_tags["sdr-antenna"] = signal.antenna
+
+    # Promote the two richest search criteria to S3 tags so captures are
+    # filterable without downloading the .sigmf-meta: where it was recorded,
+    # and with which antenna. Everything else stays in the .sigmf-meta. S3
+    # caps objects at 10 tags; these two keep us within budget.
+    if location:
+        data_tags["location"] = location
+    if rich.antenna and rich.antenna.get("model"):
+        data_tags["antenna-model"] = str(rich.antenna["model"])
 
     # --- 4. Upload -------------------------------------------------------
     # Meta is uploaded first: if a consumer races between the two puts, it
