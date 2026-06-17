@@ -91,3 +91,4 @@ docs/context/transcripts/
 
 # Scripts GNU Radio générés par GRC depuis les .grc (on versionne le .grc source)
 gnuradio/*.py
+captures/
