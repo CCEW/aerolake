@@ -90,6 +90,34 @@ def test_geolocation_rejects_out_of_range() -> None:
         GeolocationConfig(latitude=200.0, longitude=0.0)
 
 
+def test_location_gps_flag_defaults_false_and_parses() -> None:
+    cfg = CaptureConfig.model_validate(
+        {**_minimal(), "location": {"name": "rooftop"}}
+    )
+    assert cfg.location is not None
+    assert cfg.location.gps is False
+
+    cfg = CaptureConfig.model_validate(
+        {**_minimal(), "location": {"name": "rooftop", "gps": True}}
+    )
+    assert cfg.location is not None
+    assert cfg.location.gps is True
+
+
+def test_location_gps_and_manual_geolocation_are_mutually_exclusive() -> None:
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        CaptureConfig.model_validate(
+            {
+                **_minimal(),
+                "location": {
+                    "name": "rooftop",
+                    "gps": True,
+                    "geolocation": {"latitude": 45.0, "longitude": -73.0},
+                },
+            }
+        )
+
+
 def test_annotation_requires_both_freq_edges() -> None:
     with pytest.raises(ValidationError):
         CaptureConfig.model_validate(

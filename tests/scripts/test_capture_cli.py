@@ -236,7 +236,7 @@ def test_missing_config_arg_errors() -> None:
 
 def test_build_rich_metadata_splits_antenna_pointing_into_annotation() -> None:
     from aerolake.producer.capture_config import CaptureConfig
-    from aerolake.scripts.capture import _build_rich_metadata
+    from aerolake.scripts.capture import _build_rich_metadata, _resolve_geolocation
 
     config = CaptureConfig.model_validate(
         {
@@ -256,7 +256,7 @@ def test_build_rich_metadata_splits_antenna_pointing_into_annotation() -> None:
             },
         }
     )
-    rich = _build_rich_metadata(config)
+    rich = _build_rich_metadata(config, _resolve_geolocation(config))
 
     assert rich.antenna is not None
     assert rich.antenna["model"] == "Tallysman TW3742"
@@ -274,7 +274,7 @@ def test_build_rich_metadata_splits_antenna_pointing_into_annotation() -> None:
 
 def test_build_rich_metadata_empty_when_nothing_supplied() -> None:
     from aerolake.producer.capture_config import CaptureConfig
-    from aerolake.scripts.capture import _build_rich_metadata
+    from aerolake.scripts.capture import _build_rich_metadata, _resolve_geolocation
 
     config = CaptureConfig.model_validate(
         {
@@ -284,7 +284,70 @@ def test_build_rich_metadata_empty_when_nothing_supplied() -> None:
             "duration_s": 1.0,
         }
     )
-    rich = _build_rich_metadata(config)
+    rich = _build_rich_metadata(config, _resolve_geolocation(config))
     assert rich.antenna is None
     assert rich.annotation is None
     assert rich.geolocation is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_geolocation: live gpsd fix vs manual point vs none (ADR-016 wiring)
+# ---------------------------------------------------------------------------
+
+
+def _config_with_location(**location: object):
+    from aerolake.producer.capture_config import CaptureConfig
+
+    return CaptureConfig.model_validate(
+        {
+            "signal_type": "gnss_l1",
+            "center_freq": GNSS_L1,
+            "sample_rate": 2_000_000.0,
+            "duration_s": 1.0,
+            "location": {"name": "rooftop", **location},
+        }
+    )
+
+
+def test_resolve_geolocation_live_gps_uses_injected_reader() -> None:
+    from aerolake.scripts.capture import _resolve_geolocation
+
+    config = _config_with_location(gps=True)
+    tpv = {"class": "TPV", "mode": 3, "lat": 45.0, "lon": -73.0, "altHAE": 12.0}
+    geo = _resolve_geolocation(config, gps_reader=lambda: tpv)
+    assert geo == {"type": "Point", "coordinates": [-73.0, 45.0, 12.0]}
+
+
+def test_resolve_geolocation_falls_back_to_manual_point() -> None:
+    from aerolake.scripts.capture import _resolve_geolocation
+
+    config = _config_with_location(
+        geolocation={"latitude": 45.0, "longitude": -73.0}
+    )
+    assert _resolve_geolocation(config) == {
+        "type": "Point",
+        "coordinates": [-73.0, 45.0],
+    }
+
+
+def test_resolve_geolocation_none_without_location() -> None:
+    from aerolake.producer.capture_config import CaptureConfig
+    from aerolake.scripts.capture import _resolve_geolocation
+
+    config = CaptureConfig.model_validate(
+        {
+            "signal_type": "gnss_l1",
+            "center_freq": GNSS_L1,
+            "sample_rate": 2_000_000.0,
+            "duration_s": 1.0,
+        }
+    )
+    assert _resolve_geolocation(config) is None
+
+
+def test_resolve_geolocation_gps_without_fix_returns_none() -> None:
+    from aerolake.scripts.capture import _resolve_geolocation
+
+    config = _config_with_location(gps=True)
+    geo = _resolve_geolocation(config, gps_reader=lambda: {"class": "TPV", "mode": 1})
+    assert geo is None

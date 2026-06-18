@@ -76,17 +76,28 @@ These go into the SigMF `global` object.
 }
 ```
 
+Or let the recorder fix its own position live from `gpsd`:
+
+```json
+"location": { "name": "field test", "mobile": true, "gps": true }
+```
+
 | Field | Type | Meaning |
 |---|---|---|
 | `name` | string | Human-readable place; also promoted to a searchable MinIO tag. |
 | `mobile` | boolean | `true` if the receiver was moving during the capture. |
+| `gps` | boolean | `true` reads the recorder's position **live from gpsd** at capture time. Mutually exclusive with `geolocation`. |
 | `geolocation.latitude` | number | Degrees, −90…90. |
 | `geolocation.longitude` | number | Degrees, −180…180. |
 | `geolocation.altitude` | number | Optional, meters above the WGS84 ellipsoid. |
 
-The geolocation is written as a standard GeoJSON Point in the SigMF `captures`
-segment. Coordinates are entered here as latitude/longitude for readability and
-converted to the spec's `[longitude, latitude, altitude]` order automatically.
+The geolocation is the **recorder's** position, written as a standard GeoJSON
+Point in the SigMF `captures` segment. A manual point is entered here as
+latitude/longitude for readability and converted to the spec's
+`[longitude, latitude, altitude]` order automatically. With `"gps": true`, the
+position is instead read live from `gpsd` and mapped to the same conformant
+`core:geolocation` (ADR-016); if there is no fix, the capture simply carries no
+geolocation.
 Coordinates are typed by hand here; automatic GPS read-out is not done yet.
 
 ## Annotation (optional)

@@ -73,7 +73,22 @@ class LocationConfig(_StrictModel):
 
     name: str
     mobile: bool = False
+    # When ``true``, the recorder's position is read LIVE from gpsd at capture
+    # time and written as a SigMF-conformant core:geolocation (ADR-016), instead
+    # of being hand-typed. Mutually exclusive with ``geolocation`` below.
+    gps: bool = False
     geolocation: GeolocationConfig | None = None
+
+    @model_validator(mode="after")
+    def _gps_xor_manual(self) -> LocationConfig:
+        # A live fix and a hand-typed point describe the same thing two ways;
+        # asking for both is almost certainly a mistake, so reject it loudly.
+        if self.gps and self.geolocation is not None:
+            raise ValueError(
+                "location.gps and location.geolocation are mutually exclusive: "
+                "request a live GPS fix OR provide a manual point, not both."
+            )
+        return self
 
 
 class AnnotationConfig(_StrictModel):

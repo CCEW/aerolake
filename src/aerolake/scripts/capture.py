@@ -41,6 +41,7 @@ from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageError
 from aerolake.producer.capture_config import CaptureConfig
 from aerolake.producer.config_loader import ConfigError, load_capture_config
+from aerolake.producer.gps import GpsReader, read_geolocation
 from aerolake.producer.orchestrator import (
     RichMetadata,
     prepare_capture,
@@ -74,23 +75,54 @@ def _summary_table(config: CaptureConfig) -> Table:
     if config.location is not None:
         table.add_row("Location", config.location.name)
         table.add_row("Motion", "dynamic" if config.location.mobile else "static")
+        if config.location.gps:
+            table.add_row("Position", "live GPS fix (gpsd)")
+        elif config.location.geolocation is not None:
+            g = config.location.geolocation
+            table.add_row("Position", f"{g.latitude:.4f}, {g.longitude:.4f}")
     else:
         table.add_row("Location", "(not specified)")
 
     return table
 
 
-def _build_rich_metadata(config: CaptureConfig) -> RichMetadata:
+def _resolve_geolocation(
+    config: CaptureConfig,
+    *,
+    gps_reader: GpsReader | None = None,
+) -> dict[str, object] | None:
+    """Resolve the capture's geolocation: live gpsd fix, manual point, or none.
+
+    If the config requests a live fix (``location.gps``), read one from gpsd —
+    this is the recorder's *actual* position, mapped to a SigMF-conformant
+    ``core:geolocation`` (ADR-016). The reader is injectable so this is testable
+    without a daemon. Otherwise fall back to the hand-typed point, or to nothing.
+
+    Returns None when there is no location block, no manual point, or gpsd has no
+    fix. Propagates RuntimeError if a *requested* live fix cannot be read (gpsd
+    unreachable), so the CLI can report it rather than silently dropping position.
+    """
+    loc = config.location
+    if loc is None:
+        return None
+    if loc.gps:
+        # read_geolocation returns None on "no fix" and raises on "gpsd down".
+        return read_geolocation(reader=gps_reader)
+    if loc.geolocation is not None:
+        return loc.geolocation.to_geojson()
+    return None
+
+
+def _build_rich_metadata(
+    config: CaptureConfig, geolocation: dict[str, object] | None
+) -> RichMetadata:
     """Flatten the config's descriptive blocks into a RichMetadata.
 
-    Pulls geolocation into GeoJSON, and flattens the annotation and antenna
-    sub-models into the plain dicts the encoder expects, dropping any field the
-    user left unset so absent values stay truly absent in the .sigmf-meta.
+    Flattens the annotation and antenna sub-models into the plain dicts the
+    encoder expects, dropping any field the user left unset so absent values
+    stay truly absent in the .sigmf-meta. ``geolocation`` is resolved by the
+    caller (a manual point or a live gpsd fix) and threaded straight through.
     """
-    geolocation: dict[str, object] | None = None
-    if config.location is not None and config.location.geolocation is not None:
-        geolocation = config.location.geolocation.to_geojson()
-
     annotation: AnnotationFields | None = None
     ann: AnnotationFields = {}
     if config.annotation is not None:
@@ -167,6 +199,20 @@ def main(argv: list[str] | None = None) -> int:
     location_name = config.location.name if config.location is not None else None
     mobile = config.location.mobile if config.location is not None else False
 
+    # Resolve geolocation before capturing: a live gpsd fix (location.gps) or a
+    # hand-typed point. A live fix is the recorder's actual position; if gpsd is
+    # unreachable we stop (exit 3) rather than silently record without it.
+    try:
+        geolocation = _resolve_geolocation(config)
+    except RuntimeError as exc:
+        console.print(f"[bold red]✗ GPS error:[/] {exc}")
+        return 3
+    if config.location is not None and config.location.gps and geolocation is None:
+        console.print(
+            "[yellow]⚠ GPS requested but no fix available — "
+            "the capture will carry no geolocation.[/]"
+        )
+
     console.print("\n[bold cyan]>[/] Recording...")
     try:
         prepared = prepare_capture(
@@ -179,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
             operator=config.operator,
             location=location_name,
             mobile=mobile,
-            rich=_build_rich_metadata(config),
+            rich=_build_rich_metadata(config, geolocation),
         )
     except Exception as exc:
         console.print(f"[bold red]✗ Capture error:[/] {exc}")

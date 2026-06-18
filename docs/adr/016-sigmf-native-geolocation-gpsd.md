@@ -79,10 +79,12 @@ recorder later.
 
 ### Negative / open
 
-- **Not yet wired into the capture path.** This ADR delivers the conversion
-  brick; a follow-up will let a capture opt into a live fix (e.g. a config flag
-  / `aerolake-capture` option) and thread the result into
-  `RichMetadata.geolocation`.
+- **Wired into the capture path** via `location.gps` in the capture config:
+  `aerolake-capture` resolves the live fix (`_resolve_geolocation`) and threads
+  it into `RichMetadata.geolocation` → the Captures-scope `core:geolocation`.
+  `gps` is mutually exclusive with a manual `geolocation`; a requested fix that
+  gpsd cannot provide stops the capture (gpsd down) or proceeds without position
+  (no fix, with a warning).
 - The live `_read_gpsd_tpv` reader is bench-tested only (like the real-SDR open
   path): it is not exercised in CI, which injects a fake reader instead.
 - Single-shot position (one fix per capture). Per-segment position tracks for a
