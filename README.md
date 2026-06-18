@@ -48,6 +48,7 @@ Voir ADR-013 pour le détail de ce recadrage.
     uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6
     uv run aerolake-validate --prefix gnss_l1/ --dry-run
     uv run aerolake-list --quality validated
+    uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campagne" --description "..."
     uv run aerolake-play --prefix gnss_l1/
     uv run aerolake-stream --prefix gnss_l1/
     uv run aerolake-subscribe --address tcp://localhost:5555

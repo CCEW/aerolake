@@ -29,6 +29,7 @@ uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e
 uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a prefix (read-only preview)
 uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
 uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
+uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campaign" --description "..."  # group complete Recordings under a prefix into a .sigmf-collection
 uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # partial read: t=200s, 10s (HTTP Range)
 uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over ZeroMQ Pub/Sub
 uv run aerolake-subscribe --address tcp://localhost:5555   # subscribe to a ZeroMQ stream (the receiving half, any device)
@@ -48,6 +49,9 @@ bucket (promote `quality` tags, write `quality_report.json` artifacts). `--dry-r
 verdicts without mutating anything. `aerolake-list` is the read-only catalog: it lists captures
 and filters them by tag (`--signal-type`, `--quality`, `--hardware`, or generic `--tag k=v`)
 using only HEAD-class requests (no sample bytes downloaded), per the ADR-003 discovery pattern.
+`aerolake-collection` groups every **complete** Recording under a `--prefix` into a single
+`.sigmf-collection` (SigMF v1.2.x), written at the prefix root (ADR-014). Orphans (a lone
+`.sigmf-data`/`.sigmf-meta`) are skipped but reported; `--dry-run` previews without writing.
 
 ## Configuration
 
@@ -177,6 +181,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-011 — *(archived, ADR-013)* analysis viewer for decoded `.h5` tables (GPS/IMU/Iridium)
 - ADR-012 — *(archived, ADR-013)* RF re-emission: BladeRF TX flowgraph + MinIO→file bridge
 - ADR-013 — **realignment on the mandate** (recadrage): restores the RX→MinIO→ZMQ streaming path as priority, keeps quality as support, archives GUI/analysis/TX
+- ADR-014 — SigMF Collections: group complete Recordings under a prefix into a `.sigmf-collection` (prefix selection, relative stream names, orphans reported)
 
 ## Testing notes
 
