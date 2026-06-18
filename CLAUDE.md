@@ -75,6 +75,10 @@ a "curated" capture. Four packages under `src/aerolake/`:
   `aerolake-ingest`) is the **real-data** entry point: take an existing IQ file **or a directory
   of packet files** (RFSoC `RX0_pkt_*.bin`, concatenated in numeric order; `cf32/cu8/cs16/cs32`
   → normalised cf32), write the `.sigmf-meta`, and stream into MinIO via `upload_multipart`.
+  `soapy_source.py` is the real-SDR acquisition layer (SoapySDR): `SdrRecorder` (ADR-015) is an
+  **OOP wrapper** owning the device lifecycle (open/configure/start/read/stop/close, context
+  manager), with an **injectable `device_opener`** so the whole recorder is testable without
+  hardware; `capture_from_sdr` is a thin function shim kept for backward compatibility.
 - **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, `read_segment()`
   for **partial/seeked reads** (HTTP Range — fetch only a `start_s`/`duration_s` window, ADR-009),
   plus `validate()` which runs the quality layer and promotes the capture's quality tag. `player.py`
@@ -182,6 +186,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-012 — *(archived, ADR-013)* RF re-emission: BladeRF TX flowgraph + MinIO→file bridge
 - ADR-013 — **realignment on the mandate** (recadrage): restores the RX→MinIO→ZMQ streaming path as priority, keeps quality as support, archives GUI/analysis/TX
 - ADR-014 — SigMF Collections: group complete Recordings under a prefix into a `.sigmf-collection` (prefix selection, relative stream names, orphans reported)
+- ADR-015 — OOP `SdrRecorder` wrapper over SoapySDR (device lifecycle as one object; injectable `device_opener` for hardware-free tests; `capture_from_sdr` kept as a shim)
 
 ## Testing notes
 
