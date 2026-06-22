@@ -7,6 +7,7 @@ conversion.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 
@@ -44,7 +45,11 @@ def test_ingest_cf32_file_roundtrips(storage_client: StorageClient, tmp_path) ->
     assert info.tags["signal-type"] == "gnss_l1"
     assert info.tags["hardware"] == "bladerf"
     assert info.metadata["sample-rate"] == "2000000"
-    assert content.sigmf_meta["global"]["core:datatype"] == "cf32_le"
+    g = content.sigmf_meta["global"]
+    assert g["core:datatype"] == "cf32_le"
+    assert g["core:num_channels"] == 1
+    assert g["core:offset"] == 0
+    assert g["core:sha512"] == hashlib.sha512(samples.tobytes()).hexdigest()
 
 
 def test_ingest_cu8_is_converted_to_normalised_cf32(

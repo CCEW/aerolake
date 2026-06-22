@@ -13,6 +13,7 @@ We also confirm that omitting every rich field reproduces the previous output
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from aerolake.producer.sigmf_writer import encode
@@ -47,6 +48,15 @@ def test_baseline_has_no_geolocation_no_annotations() -> None:
 def test_datetime_uses_z_suffix() -> None:
     meta = _meta(encode(_signal()))
     assert meta["captures"][0]["core:datetime"].endswith("Z")
+
+
+def test_integrity_and_structural_fields() -> None:
+    # core:sha512 (data integrity), num_channels, offset — SigMF global fields.
+    cap = encode(_signal())
+    g = _meta(cap)["global"]
+    assert g["core:num_channels"] == 1
+    assert g["core:offset"] == 0
+    assert g["core:sha512"] == hashlib.sha512(cap.data_bytes).hexdigest()
 
 
 def test_geolocation_lands_in_captures_segment() -> None:

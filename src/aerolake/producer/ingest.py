@@ -22,6 +22,7 @@ Two things make this the "real data" entry point:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -193,16 +194,19 @@ def ingest_files(
             f"Ingested {datatype} capture at {sample_rate / 1e6:.3f} MS/s, "
             f"{center_freq / 1e6:.3f} MHz"
         )
+    global_meta: dict[str, object] = {
+        "core:datatype": _TARGET_DATATYPE,
+        "core:sample_rate": float(sample_rate),
+        "core:author": "AeroLake",
+        "core:description": description,
+        "core:recorder": recorder,
+        "core:hw": hardware,
+        "core:version": SIGMF_VERSION,
+        "core:num_channels": 1,
+        "core:offset": 0,
+    }
     metadata = {
-        "global": {
-            "core:datatype": _TARGET_DATATYPE,
-            "core:sample_rate": float(sample_rate),
-            "core:author": "AeroLake",
-            "core:description": description,
-            "core:recorder": recorder,
-            "core:hw": hardware,
-            "core:version": SIGMF_VERSION,
-        },
+        "global": global_meta,
         "captures": [
             {
                 "core:sample_start": 0,
@@ -233,13 +237,30 @@ def ingest_files(
         "recorder": recorder,
         "hardware": hardware,
     }
+
+    # Hash the .sigmf-data WHILE it streams, so a multi-GB capture is hashed in
+    # the same single pass it is uploaded (no extra read of the files).
+    hasher = hashlib.sha512()
+
+    def _hashed_chunks() -> Iterator[bytes]:
+        for chunk in _iter_cf32_files(file_paths, datatype, chunk_samples):
+            hasher.update(chunk)
+            yield chunk
+
     data_bytes_uploaded = client.upload_multipart(
         data_key,
-        _iter_cf32_files(file_paths, datatype, chunk_samples),
+        _hashed_chunks(),
         content_type="application/octet-stream",
         metadata=data_metadata,
         tags=data_tags,
     )
+
+    # Fold the computed hash into the metadata (core:sha512) and rewrite the
+    # small meta object. The meta still lands before the data; this only
+    # enriches it once the full hash is known.
+    global_meta["core:sha512"] = hasher.hexdigest()
+    meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
+    client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
 
     log.info("ingest.done", data_key=data_key, bytes=data_bytes_uploaded)
     return IngestResult(

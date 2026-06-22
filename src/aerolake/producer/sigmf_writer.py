@@ -11,6 +11,7 @@ happens in memory, which keeps the pipeline stateless and efficient.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -170,6 +171,13 @@ def encode(
         "core:recorder": recorder,
         "core:hw": hardware,
         "core:version": SIGMF_VERSION,
+        # SigMF integrity + structural fields. sha512 is the hash of the raw
+        # .sigmf-data bytes (lets a consumer verify the data wasn't corrupted);
+        # num_channels=1 (single interleaved IQ stream) and offset=0 (first
+        # sample index) are written explicitly rather than left to defaults.
+        "core:num_channels": 1,
+        "core:offset": 0,
+        "core:sha512": hashlib.sha512(data_bytes).hexdigest(),
         "aerolake:duration_s": duration_s,
         "aerolake:sample_count": len(signal.samples),
     }
