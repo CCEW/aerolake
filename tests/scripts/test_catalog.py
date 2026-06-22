@@ -20,7 +20,6 @@ def _seed(
     data_key: str,
     *,
     signal_type: str = "gnss_l1",
-    quality: str = "raw",
     hardware: str = "synthetic",
     sample_rate: int = 2_000_000,
     center_freq: int = 1_575_420_000,
@@ -40,7 +39,7 @@ def _seed(
             "center-freq": str(center_freq),
             "session-id": "abc12345",
         },
-        tags={"signal-type": signal_type, "quality": quality, "hardware": hardware},
+        tags={"signal-type": signal_type, "hardware": hardware},
     )
 
 
@@ -79,12 +78,12 @@ def test_prefix_scopes_the_listing(storage_client, capsys) -> None:
 
 # --- Filtering -----------------------------------------------------------
 
-def test_filter_by_quality(storage_client, capsys) -> None:
-    _seed(storage_client, "gnss_l1/ok/capture.sigmf-data", quality="validated")
-    _seed(storage_client, "gnss_l1/raw/capture.sigmf-data", quality="raw")
+def test_filter_by_hardware(storage_client, capsys) -> None:
+    _seed(storage_client, "gnss_l1/ok/capture.sigmf-data", hardware="bladerf")
+    _seed(storage_client, "gnss_l1/other/capture.sigmf-data", hardware="synthetic")
     reader = CaptureReader(storage_client)
 
-    exit_code = main(["--quality", "validated", "--json"], reader=reader)
+    exit_code = main(["--hardware", "bladerf", "--json"], reader=reader)
 
     assert exit_code == 0
     report = _json_out(capsys)
@@ -95,14 +94,14 @@ def test_filter_by_quality(storage_client, capsys) -> None:
 def test_filters_combine_with_and(storage_client, capsys) -> None:
     # Matches both filters.
     _seed(storage_client, "match/capture.sigmf-data",
-          signal_type="iridium", quality="validated")
-    # Right signal-type, wrong quality.
+          signal_type="iridium", hardware="bladerf")
+    # Right signal-type, wrong hardware.
     _seed(storage_client, "nomatch/capture.sigmf-data",
-          signal_type="iridium", quality="raw")
+          signal_type="iridium", hardware="synthetic")
     reader = CaptureReader(storage_client)
 
     exit_code = main(
-        ["--signal-type", "iridium", "--quality", "validated", "--json"],
+        ["--signal-type", "iridium", "--hardware", "bladerf", "--json"],
         reader=reader,
     )
 
@@ -128,10 +127,10 @@ def test_generic_tag_filter(storage_client, capsys) -> None:
 # --- Edge cases ----------------------------------------------------------
 
 def test_no_matches_returns_zero(storage_client, capsys) -> None:
-    _seed(storage_client, "gnss_l1/A/capture.sigmf-data", quality="raw")
+    _seed(storage_client, "gnss_l1/A/capture.sigmf-data")
     reader = CaptureReader(storage_client)
 
-    exit_code = main(["--quality", "rejected"], reader=reader)
+    exit_code = main(["--signal-type", "nonexistent"], reader=reader)
 
     assert exit_code == 0
     assert "no captures found" in capsys.readouterr().out.lower()

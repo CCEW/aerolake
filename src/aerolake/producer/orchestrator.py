@@ -280,16 +280,14 @@ def prepare_capture(
         "sample-count": str(len(signal.samples)),
     }
 
-    # S3 tags: categorical attributes for search and lifecycle policies.
-    # Quality starts as "raw"; the consumer-side validation step promotes it to
-    # "validated" or "rejected" (see ADR-005 for the promotion lifecycle).
+    # S3 tags: categorical attributes for search (ADR-003). Indexable on the
+    # MinIO side without downloading the .sigmf-data body.
     data_tags = {
         "signal-type": signal_type,
         "operator": operator,
         "mobile": "true" if mobile else "false",
         "recorder": recorder,
         "hardware": hardware,
-        "quality": "raw",
     }
     # Real captures carry extra hardware provenance for fine-grained search:
     # which physical device, what gain, which antenna port produced the data.

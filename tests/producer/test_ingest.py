@@ -43,7 +43,6 @@ def test_ingest_cf32_file_roundtrips(storage_client: StorageClient, tmp_path) ->
     info = reader.inspect(result.data_key)
     assert info.tags["signal-type"] == "gnss_l1"
     assert info.tags["hardware"] == "bladerf"
-    assert info.tags["quality"] == "raw"
     assert info.metadata["sample-rate"] == "2000000"
     assert content.sigmf_meta["global"]["core:datatype"] == "cf32_le"
 

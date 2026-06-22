@@ -12,8 +12,7 @@ Ce dépôt suit le mandat du projet (docs/LASSENA-Project_AeroLake.pdf) : un pip
 
 - Producer — génère/encode des échantillons IQ au format SigMF et les pousse dans MinIO (multipart upload).
 - Lakehouse — MinIO (S3-compatible) : stockage des .sigmf-data + .sigmf-meta, avec métadonnées d'objet (x-amz-meta-*) et tags pour la découverte rapide et le cycle de vie.
-- Consumer — relit les captures par HTTP Range Requests et les publie sur un bus ZeroMQ Pub/Sub, prêt à alimenter décodeurs logiciels, scripts de validation ou, en phase future, un émetteur SDR.
-- Quality — couche de support qui mesure la qualité des captures (clipping, RMS, échantillons invalides, complétude, validité SigMF) et promeut un tag quality (raw -> validated/rejected).
+- Consumer — relit les captures par HTTP Range Requests et les publie sur un bus ZeroMQ Pub/Sub, prêt à alimenter décodeurs logiciels ou, en phase future, un émetteur SDR.
 
 ### Hors-périmètre (phases futures, archivé)
 
@@ -44,10 +43,9 @@ Voir ADR-013 pour le détail de ce recadrage.
 ## Commandes principales
 
     uv run aerolake-healthcheck
-    uv run aerolake-producer --preset gnss-l1 --duration 1.0
+    uv run aerolake-capture --config examples/capture.example.json
     uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6
-    uv run aerolake-validate --prefix gnss_l1/ --dry-run
-    uv run aerolake-list --quality validated
+    uv run aerolake-list --signal-type gnss_l1
     uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campagne" --description "..."
     uv run aerolake-play --prefix gnss_l1/
     uv run aerolake-stream --prefix gnss_l1/
@@ -69,7 +67,6 @@ Un test d'intégration optionnel (tests/integration/) s'exécute contre un vrai 
     │   ├── common/     Configuration, storage (chokepoint S3), logging
     │   ├── producer/   Capture/ingestion -> SigMF -> MinIO
     │   ├── consumer/   Extraction MinIO (HTTP Range) -> ZeroMQ
-    │   ├── quality/    Métriques de qualité + checker (support)
     │   └── scripts/    Points d'entrée CLI
     ├── tests/          Tests pytest (moto)
     ├── docker/         MinIO local (docker-compose)

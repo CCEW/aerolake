@@ -232,7 +232,6 @@ def ingest_files(
         "signal-type": signal_type,
         "recorder": recorder,
         "hardware": hardware,
-        "quality": "raw",
     }
     data_bytes_uploaded = client.upload_multipart(
         data_key,

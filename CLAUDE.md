@@ -26,9 +26,7 @@ cd docker && docker compose up -d   # MinIO API :9000, console :9001, auto-creat
 uv run aerolake-healthcheck          # verify .env + MinIO reachable + bucket accessible
 uv run aerolake-producer --preset gnss-l1 --duration 1.0   # generate+upload a synthetic capture
 uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6  # ingest a REAL IQ file
-uv run aerolake-validate --prefix gnss_l1/ --dry-run       # batch-validate a prefix (read-only preview)
-uv run aerolake-validate --prefix gnss_l1/ --expected-duration 1.0  # curate: promote quality tags + write reports
-uv run aerolake-list --quality validated     # list/filter captures by tag (no byte download)
+uv run aerolake-list --signal-type iridium   # list/filter captures by tag (no byte download)
 uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campaign" --description "..."  # group complete Recordings under a prefix into a .sigmf-collection
 uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # partial read: t=200s, 10s (HTTP Range)
 uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over ZeroMQ Pub/Sub
@@ -39,15 +37,13 @@ uv run ruff check .              # lint  (ruff config in pyproject; line-length 
 uv run ruff format .             # format
 uv run mypy src                  # type-check
 uv run pytest                    # full suite (verbose + short tracebacks via pyproject addopts)
-uv run pytest tests/quality/test_metrics.py            # one file
-uv run pytest tests/quality/test_metrics.py::test_name # one test
+uv run pytest tests/consumer/test_reader.py            # one file
+uv run pytest tests/consumer/test_reader.py::test_read_returns_decoded_samples # one test
 uv run pytest -k clipping        # tests matching an expression
 ```
 
-`aerolake-validate` orchestrates `CaptureReader.validate()` over a whole prefix to curate the
-bucket (promote `quality` tags, write `quality_report.json` artifacts). `--dry-run` previews
-verdicts without mutating anything. `aerolake-list` is the read-only catalog: it lists captures
-and filters them by tag (`--signal-type`, `--quality`, `--hardware`, or generic `--tag k=v`)
+`aerolake-list` is the read-only catalog: it lists captures
+and filters them by tag (`--signal-type`, `--hardware`, or generic `--tag k=v`)
 using only HEAD-class requests (no sample bytes downloaded), per the ADR-003 discovery pattern.
 `aerolake-collection` groups every **complete** Recording under a `--prefix` into a single
 `.sigmf-collection` (SigMF v1.2.x), written at the prefix root (ADR-014). Orphans (a lone
@@ -63,8 +59,7 @@ dev; real env vars override it. Always read settings through `get_settings()` (i
 
 ## Architecture
 
-The pipeline is **Producer → MinIO → Consumer**, with a **Quality** layer that gates what becomes
-a "curated" capture. Four packages under `src/aerolake/`:
+The pipeline is **Producer → MinIO → Consumer**. Three packages under `src/aerolake/`:
 
 - **`common/`** — shared infra. `config.py` (Settings). `storage.py` (`StorageClient`, the *single*
   chokepoint for all S3 access; every read/write goes through it — incl. `upload_multipart`
@@ -84,18 +79,14 @@ a "curated" capture. Four packages under `src/aerolake/`:
   `None` when there is no fix — avoiding the "GPSD trap" (raw dump / `[lat,lon]` order / fake
   position). The gpsd reader is injectable, so the conversion is tested without a daemon.
 - **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, `read_segment()`
-  for **partial/seeked reads** (HTTP Range — fetch only a `start_s`/`duration_s` window, ADR-009),
-  plus `validate()` which runs the quality layer and promotes the capture's quality tag. `player.py`
+  for **partial/seeked reads** (HTTP Range — fetch only a `start_s`/`duration_s` window, ADR-009).
+  `player.py`
   (`CapturePlayer`, ADR-007) replays a capture's samples in frames paced at the recorded sample
   rate (injectable clock for tests) — the software half of "playback". `stream.py`
   (`FramePublisher`/`FrameSubscriber`, ADR-008) publishes those frames over a ZeroMQ PUB/SUB bus
   (pure `encode_frame`/`decode_frame` wire format; injectable socket for tests).
-- **`quality/`** — `metrics.py` is **pure functions** (no I/O, no logging, no decisions:
-  clipping ratio, RMS dBFS, invalid samples, DC offset, completeness, SigMF metadata validity).
-  `checker.py` (`QualityChecker`/`QualityReport`) applies configurable `QualityThresholds` to
-  those metrics and produces a pass/fail verdict.
-`scripts/` holds the CLI entry points (`healthcheck.py`, `producer.py`, `ingest.py`, `validate.py`,
-`catalog.py`, `play.py`, `stream.py`, `subscribe.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
+`scripts/` holds the CLI entry points (`healthcheck.py`, `capture.py`, `ingest.py`,
+`catalog.py`, `collection.py`, `play.py`, `stream.py`, `subscribe.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
 2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
 structlog logs go to stderr, keeping stdout clean for results (`--json`, tables).
 
@@ -119,26 +110,20 @@ These are the load-bearing decisions; read the referenced ADR before changing th
 
 - **Bucket key layout** (`orchestrator.py`): `{signal_type}/{YYYY-MM-DD}/{session_id}/capture.sigmf-data`
   and `…/capture.sigmf-meta`. `session_id` is 8 hex chars. A capture is "complete" only when both
-  objects exist; `CaptureReader.list_captures` skips orphans. Quality reports are written as
-  `…/{session}/quality_report.json`.
+  objects exist; `CaptureReader.list_captures` skips orphans.
 
 - **Metadata vs. tags split** (ADR-003, `docs/adr/003-…`): continuous/technical values go in
   `x-amz-meta-*` headers (cheap to read via HEAD, no body transfer); categorical/enumerable values
-  go in **S3 tags** (`signal-type`, `recorder`, `hardware`, `quality`) which are indexable and drive
-  lifecycle. **Both are attached only to the `.sigmf-data` object** — the `.sigmf-meta` JSON carries
+  go in **S3 tags** (`signal-type`, `recorder`, `hardware`) which are indexable for discovery.
+  **Both are attached only to the `.sigmf-data` object** — the `.sigmf-meta` JSON carries
   no headers/tags because its body *is* the description.
 
 - **Upload order matters** (`orchestrator.py`): `.sigmf-meta` is uploaded **before** `.sigmf-data`,
   so a consumer racing between the two puts sees interpretable JSON rather than orphan bytes.
 
 - **`StorageClient.update_tags` is a full REPLACE, not a merge.** The S3 `PutObjectTagging` API
-  overwrites the entire tag set. To change one tag (e.g. quality promotion), you MUST read existing
-  tags, merge, then write — `CaptureReader.validate` does exactly this. Forgetting the merge wipes
-  `signal-type`/`hardware`/`recorder`.
-
-- **Quality lifecycle** (ADR-003 + ADR-004): tag starts at `quality=raw` (set by the producer).
-  `validate()` promotes it to `validated` or `rejected` based on the report verdict. `archived` is
-  manual. There is no automated retention/lifecycle policy (dropped from scope per ADR-004).
+  overwrites the entire tag set. To change one tag, you MUST read existing tags, merge, then write.
+  Forgetting the merge wipes `signal-type`/`hardware`/`recorder`.
 
 - **boto3 endpoint switch** (ADR-001, `storage.py`): when `s3_endpoint` is empty, boto3 talks to
   real AWS — which is also what **moto** intercepts in tests; when set, it talks to MinIO. MinIO
@@ -149,10 +134,9 @@ These are the load-bearing decisions; read the referenced ADR before changing th
 
 **ADR-013 realigned the project on the mandate (recadrage, 2026-06-08).** The core deliverable is
 the **RX pipeline**: capture → MinIO (SigMF + metadata/tags) → HTTP Range extraction → ZeroMQ
-Pub/Sub. An earlier reprioritization toward data quality (ADR-004, after a call with the
-supervisor) had deferred the streaming path; ADR-013 **restores streaming as the priority** and
-keeps the **quality layer as a support tool**, not the central axis. Out-of-scope explorations
-(GUI/ADR-006, `.h5` analysis/ADR-011, TX/ADR-012) were **archived** to the
+Pub/Sub. The **quality/validation layer was later removed entirely** (ADR-018): the user opts in
+to saving each acquisition, so an automated quality verdict added no value. Out-of-scope
+explorations (GUI/ADR-006, `.h5` analysis/ADR-011, TX/ADR-012) were **archived** to the
 `archive/explorations-v1` branch. Real SDR capture (SoapySDR) is still future work — today the
 producer generates synthetic signals. Trust the ADRs and the code for current status.
 
@@ -179,8 +163,8 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-001 — boto3 over the MinIO SDK
 - ADR-002 — batch upload now, streaming later
 - ADR-003 — metadata vs. tagging convention (the key layout + lifecycle)
-- ADR-004 — prioritize data quality over streaming (priority later corrected by ADR-013)
-- ADR-005 — consumer-side quality tag promotion lifecycle (raw → validated/rejected)
+- ADR-004 — *(removed, ADR-018)* prioritize data quality over streaming (corrected by ADR-013)
+- ADR-005 — *(removed, ADR-018)* consumer-side quality tag promotion lifecycle (raw → validated/rejected)
 - ADR-006 — *(archived, ADR-013)* visualization GUI: Streamlit + Plotly web app
 - ADR-007 — playback strategy (software cadence replay now; SDR re-emission later)
 - ADR-008 — ZeroMQ Pub/Sub streaming of capture frames (reactivates ADR-002's streaming half)
@@ -188,10 +172,11 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-010 — streaming multipart upload to bypass RAM (`StorageClient.upload_multipart`)
 - ADR-011 — *(archived, ADR-013)* analysis viewer for decoded `.h5` tables (GPS/IMU/Iridium)
 - ADR-012 — *(archived, ADR-013)* RF re-emission: BladeRF TX flowgraph + MinIO→file bridge
-- ADR-013 — **realignment on the mandate** (recadrage): restores the RX→MinIO→ZMQ streaming path as priority, keeps quality as support, archives GUI/analysis/TX
+- ADR-013 — **realignment on the mandate** (recadrage): restores the RX→MinIO→ZMQ streaming path as priority, archives GUI/analysis/TX
 - ADR-014 — SigMF Collections: group complete Recordings under a prefix into a `.sigmf-collection` (prefix selection, relative stream names, orphans reported)
 - ADR-015 — OOP `SdrRecorder` wrapper over SoapySDR (device lifecycle as one object; injectable `device_opener` for hardware-free tests; `capture_from_sdr` kept as a shim)
 - ADR-016 — SigMF-native geolocation from gpsd (avoid the "GPSD trap": live fix → validated `core:geolocation`, None when no fix; injectable gpsd reader)
+- ADR-018 — **remove the quality/validation layer** (user opts in to saving each acquisition; supersedes ADR-004/005)
 
 ## Testing notes
 

@@ -7,7 +7,7 @@ S3 tags and ``x-amz-meta-*`` metadata (two HEAD-class requests via
 ``CaptureReader.inspect``), then prints a table.
 
 Filtering is done on **tags** (the categorical, enumerable attributes:
-signal-type, quality, hardware — see ADR-003), combined with AND. Technical
+signal-type, hardware — see ADR-003), combined with AND. Technical
 metadata (sample rate, center frequency, …) is shown as columns but not
 filtered on, matching the ADR-003 split.
 
@@ -20,7 +20,7 @@ Exit codes
 Usage
 -----
     uv run aerolake-list
-    uv run aerolake-list --prefix gnss_l1/ --quality validated
+    uv run aerolake-list --prefix gnss_l1/ --signal-type iridium
     uv run aerolake-list --signal-type iridium --hardware synthetic
     uv run aerolake-list --tag project=nesiva --tag operator=theo --json
 """
@@ -65,11 +65,6 @@ def _build_parser() -> argparse.ArgumentParser:
     # Named filters for the well-known tags defined in ADR-003. Each maps to an
     # exact-match constraint on the corresponding tag.
     parser.add_argument("--signal-type", help="Filter on the signal-type tag.")
-    parser.add_argument(
-        "--quality",
-        choices=["raw", "validated", "rejected", "archived"],
-        help="Filter on the quality tag.",
-    )
     parser.add_argument("--hardware", help="Filter on the hardware tag.")
     # Generic escape hatch for any other tag, repeatable: --tag key=value.
     parser.add_argument(
@@ -97,8 +92,6 @@ def _parse_filters(args: argparse.Namespace) -> dict[str, str]:
     # Named filters first.
     if args.signal_type is not None:
         filters["signal-type"] = args.signal_type
-    if args.quality is not None:
-        filters["quality"] = args.quality
     if args.hardware is not None:
         filters["hardware"] = args.hardware
     # Then generic key=value pairs (these win if they repeat a named one).
@@ -148,24 +141,15 @@ def _print_table(console: Console, rows: list[CaptureRow]) -> None:
     table = Table(title="AeroLake captures")
     table.add_column("Capture", overflow="fold")
     table.add_column("Signal type")
-    table.add_column("Quality")
+    table.add_column("Hardware")
     table.add_column("Sample rate", justify="right")
     table.add_column("Center freq", justify="right")
 
-    # Colour the quality cell so the curation state pops at a glance.
-    quality_style = {
-        "validated": "green",
-        "rejected": "red",
-        "raw": "yellow",
-        "archived": "dim",
-    }
     for r in rows:
-        quality = r.tags.get("quality", "—")
-        style = quality_style.get(quality, "")
         table.add_row(
             r.data_key,
             r.tags.get("signal-type", "—"),
-            f"[{style}]{quality}[/]" if style else quality,
+            r.tags.get("hardware", "—"),
             _fmt_hz(r.metadata.get("sample-rate"), "MS/s"),
             _fmt_hz(r.metadata.get("center-freq"), "MHz"),
         )
