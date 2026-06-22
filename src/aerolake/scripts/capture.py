@@ -2,8 +2,8 @@
 
 The standard way to record: a capture is described once in a JSON file,
 validated, and replayed. A config file is reviewable, version-controllable, and
-reproducible. (For quick command-line captures without a JSON file, the
-flag-driven ``aerolake-producer`` remains available.)
+reproducible. For a synthetic capture (no hardware), point the config's
+``source`` block at the synthetic generator (see ``examples/``).
 
 Flow
 ----

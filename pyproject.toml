@@ -22,7 +22,6 @@ dependencies = [
 
 [project.scripts]
 aerolake-healthcheck = "aerolake.scripts.healthcheck:main"
-aerolake-producer = "aerolake.scripts.producer:main"
 aerolake-capture = "aerolake.scripts.capture:main"
 aerolake-ingest = "aerolake.scripts.ingest:main"
 aerolake-list = "aerolake.scripts.catalog:main"

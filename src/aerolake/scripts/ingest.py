@@ -3,7 +3,7 @@
 Takes a raw IQ file on disk (e.g. recorded by GNU Radio's record_sdr.grc, or a
 raw SDR dump) and uploads it to MinIO as a SigMF capture — converting to cf32
 if needed and streaming the data via multipart upload (ADR-010). This is the
-"real data" entry point that complements the synthetic aerolake-producer.
+"real data" entry point that complements the config-driven ``aerolake-capture``.
 
 Exit codes
 ----------

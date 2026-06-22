@@ -405,10 +405,9 @@ def capture_and_upload(
 ) -> CaptureResult:
     """Capture and upload in one call (prepare + push).
 
-    Unchanged behavior for callers that want the whole cycle at once
-    (``aerolake-producer``). The file-driven ``aerolake-capture`` uses
-    :func:`prepare_capture` and :func:`push_capture` separately so it can ask
-    for confirmation before storing.
+    A convenience for callers that want the whole cycle at once (used by tests).
+    The file-driven ``aerolake-capture`` uses :func:`prepare_capture` and
+    :func:`push_capture` separately so it can ask for confirmation before storing.
     """
     prepared = prepare_capture(
         signal_type=signal_type,
