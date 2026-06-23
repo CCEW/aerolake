@@ -1,0 +1,31 @@
+{
+  "signal_type": "test_banc",
+  "signal_type_detail": "tonalite CW",
+  "center_freq": 1575420000,
+  "sample_rate": 2000000,
+  "duration_s": 10,
+
+  "source": { "type": "soapy", "driver": "rtlsdr", "agc": true },
+
+  "author": "Theo Schmitt <theo.schmitt02@gmail.com>",
+  "description": "Capture banc RTL-SDR — generateur cable direct (sans antenne)",
+  "license": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "operator": "schmitt",
+
+  "location": {
+    "name": "LASSENA, ETS Montreal",
+    "mobile": false,
+    "geolocation": {
+      "latitude": 45.4946,
+      "longitude": -73.5623,
+      "altitude": 50.0
+    }
+  },
+
+  "annotation": {
+    "label": "tonalite banc",
+    "comment": "CW generateur cable direct",
+    "freq_lower_edge": 1575170000,
+    "freq_upper_edge": 1575670000
+  }
+}

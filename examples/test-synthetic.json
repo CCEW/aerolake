@@ -1,0 +1,9 @@
+{
+  "signal_type": "test_synthetic",
+  "center_freq": 100000000,
+  "sample_rate": 2000000,
+  "duration_s": 1.0,
+  "source": { "type": "synthetic", "tone_offset_hz": 250000, "snr_db": 20 },
+  "operator": "schmitt",
+  "description": "Test du pipeline sans materiel (signal synthetique : tonalite a +250 kHz)"
+}
