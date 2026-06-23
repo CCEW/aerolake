@@ -78,6 +78,9 @@ The pipeline is **Producer → MinIO → Consumer**. Three packages under `src/a
   SigMF-conformant `core:geolocation` Point (revalidated via `GeolocationConfig`), or returns
   `None` when there is no fix — avoiding the "GPSD trap" (raw dump / `[lat,lon]` order / fake
   position). The gpsd reader is injectable, so the conversion is tested without a daemon.
+  `preview.py` (`render_spectrum_png`) renders a spectrum+waterfall PNG; `push_capture(with_preview=True)`
+  stores it next to the capture (`…-preview.png`) so the lakehouse is browsable at a glance — best-effort
+  (a preview failure never fails the capture), used by `aerolake-capture`.
 - **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, `read_segment()`
   for **partial/seeked reads** (HTTP Range — fetch only a `start_s`/`duration_s` window, ADR-009).
   `player.py`

@@ -321,12 +321,19 @@ def prepare_capture(
 def push_capture(
     prepared: PreparedCapture,
     storage_client: StorageClient | None = None,
+    *,
+    with_preview: bool = False,
 ) -> CaptureResult:
     """Upload an already-prepared capture to MinIO.
 
     The second half of the split: takes the bytes/keys/tags from
     :func:`prepare_capture` and performs the two uploads. Kept separate so a
     caller can interpose a confirmation step between preparing and pushing.
+
+    When ``with_preview`` is True, a small spectrum/waterfall PNG is rendered
+    and stored next to the capture (``…-preview.png``) so the lakehouse is
+    browsable at a glance. It is best-effort: a preview failure is logged but
+    never fails the capture.
     """
     client = storage_client or StorageClient()
 
@@ -352,6 +359,10 @@ def push_capture(
         data_key=prepared.data_key,
         meta_key=prepared.meta_key,
     )
+
+    if with_preview:
+        _upload_preview(client, prepared)
+
     return CaptureResult(
         session_id=prepared.session_id,
         data_key=prepared.data_key,
@@ -359,6 +370,28 @@ def push_capture(
         sample_count=prepared.sample_count,
         bytes_uploaded=prepared.size_bytes,
     )
+
+
+def _upload_preview(client: StorageClient, prepared: PreparedCapture) -> None:
+    """Render a spectrum PNG and store it next to the capture — best-effort.
+
+    Never raises: a preview is a convenience, so a rendering/upload failure is
+    logged as a warning and swallowed (the capture itself is already stored).
+    """
+    import numpy as np
+
+    from aerolake.producer.preview import render_spectrum_png
+
+    preview_key = prepared.data_key[: -len(".sigmf-data")] + "-preview.png"
+    try:
+        samples = np.frombuffer(prepared.data_bytes, dtype="<c8")
+        sample_rate = float(prepared.data_metadata.get("sample-rate") or 0)
+        center_freq = float(prepared.data_metadata.get("center-freq") or 0)
+        png = render_spectrum_png(samples, sample_rate, center_freq)
+        client.upload_bytes(preview_key, png, content_type="image/png")
+        logger.info("producer.capture.preview_uploaded", preview_key=preview_key)
+    except Exception as exc:
+        logger.warning("producer.capture.preview_failed", error=str(exc))
 
 
 def save_capture_locally(

@@ -252,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     # --- Deliberate push (the validate-before-upload guard) --------------
     if Confirm.ask("\nPush this capture to MinIO?", default=True):
         try:
-            result = push_capture(prepared)
+            result = push_capture(prepared, with_preview=True)
         except StorageError as exc:
             console.print(f"[bold red]✗ Storage error:[/] {exc}")
             return 1

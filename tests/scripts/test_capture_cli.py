@@ -88,7 +88,7 @@ def _answers(monkeypatch, *responses: bool) -> None:
 def test_prepare_receives_mapped_config(tmp_path, monkeypatch) -> None:
     captured: dict = {}
     _stub_prepare(monkeypatch, captured)
-    monkeypatch.setattr(capture_cli, "push_capture", lambda prepared: _FakeResult())
+    monkeypatch.setattr(capture_cli, "push_capture", lambda prepared, **kw: _FakeResult())
     _answers(monkeypatch, True)
 
     code = capture_cli.main(["--config", _write(tmp_path, _full_config())])
@@ -109,7 +109,7 @@ def test_prepare_receives_mapped_config(tmp_path, monkeypatch) -> None:
 def test_without_location_passes_none_and_false(tmp_path, monkeypatch) -> None:
     captured: dict = {}
     _stub_prepare(monkeypatch, captured)
-    monkeypatch.setattr(capture_cli, "push_capture", lambda prepared: _FakeResult())
+    monkeypatch.setattr(capture_cli, "push_capture", lambda prepared, **kw: _FakeResult())
     _answers(monkeypatch, True)
 
     cfg = _full_config()
@@ -130,7 +130,7 @@ def test_yes_pushes_to_minio(tmp_path, monkeypatch) -> None:
     _stub_prepare(monkeypatch)
     pushed: dict = {}
 
-    def fake_push(prepared):
+    def fake_push(prepared, **kw):
         pushed["called"] = True
         return _FakeResult()
 
@@ -204,7 +204,7 @@ def test_bad_config_path_exits_2(tmp_path, monkeypatch) -> None:
 def test_storage_error_on_push_exits_1(tmp_path, monkeypatch) -> None:
     _stub_prepare(monkeypatch)
 
-    def raise_storage(prepared):
+    def raise_storage(prepared, **kw):
         raise StorageError("MinIO unreachable")
 
     monkeypatch.setattr(capture_cli, "push_capture", raise_storage)
