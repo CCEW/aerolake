@@ -9,7 +9,9 @@ custom endpoint (typically a local MinIO instance).
 from __future__ import annotations
 
 import contextlib
+import re
 from collections.abc import Iterable, Iterator
+from urllib.parse import quote, urlencode
 
 import boto3
 import structlog
@@ -19,6 +21,30 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 from aerolake.common.config import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
+
+# S3 object tags accept only this set in a tag VALUE: letters, digits, space,
+# and + - = . _ : / @. Anything else (commas, accents, …) makes S3 reject the
+# request with "InvalidTag". We sanitise values before tagging — the full,
+# verbatim value is always preserved in the SigMF metadata; the tag is just a
+# searchable, sanitised key.
+_S3_TAG_INVALID = re.compile(r"[^A-Za-z0-9 +\-=._:/@]")
+
+
+def _safe_tag_value(value: object) -> str:
+    """Reduce a value to S3 tag-safe characters (invalid ones -> '_')."""
+    return _S3_TAG_INVALID.sub("_", str(value))
+
+
+def _tagging_header(tags: dict[str, str]) -> str:
+    """Build the ``Tagging`` query string for put_object / create_multipart.
+
+    Each value is sanitised then URL-encoded, so spaces and special characters
+    travel safely (the previous manual ``k=v&…`` join did neither, which broke
+    uploads whenever a value contained a space or comma — e.g. a location).
+    """
+    return urlencode(
+        {k: _safe_tag_value(v) for k, v in tags.items()}, quote_via=quote
+    )
 
 
 class StorageError(Exception):
@@ -158,7 +184,7 @@ class StorageClient:
         # This differs from the upload-time "Tagging" parameter which uses
         # a URL-encoded string. Same concept, different wire format —
         # one of S3's little inconsistencies.
-        tag_set = [{"Key": k, "Value": v} for k, v in tags.items()]
+        tag_set = [{"Key": k, "Value": _safe_tag_value(v)} for k, v in tags.items()]
 
         try:
             self._client.put_object_tagging(
@@ -215,11 +241,9 @@ class StorageClient:
             # passes numbers.
             put_kwargs["Metadata"] = {k: str(v) for k, v in metadata.items()}
         if tags:
-            # S3 tags are passed as URL-encoded query string at upload time.
-            # boto3 takes a plain string here; we build it manually.
-            put_kwargs["Tagging"] = "&".join(
-                f"{k}={v}" for k, v in tags.items()
-            )
+            # S3 tags travel as a URL-encoded query string; values are sanitised
+            # + encoded so spaces/commas/etc. cannot break the upload.
+            put_kwargs["Tagging"] = _tagging_header(tags)
 
         try:
             self._client.put_object(**put_kwargs)
@@ -270,7 +294,7 @@ class StorageClient:
         if metadata:
             create_kwargs["Metadata"] = {k: str(v) for k, v in metadata.items()}
         if tags:
-            create_kwargs["Tagging"] = "&".join(f"{k}={v}" for k, v in tags.items())
+            create_kwargs["Tagging"] = _tagging_header(tags)
 
         try:
             upload_id = self._client.create_multipart_upload(**create_kwargs)[

@@ -122,6 +122,23 @@ def test_upload_bytes_stores_tags(storage_client) -> None:
     assert fetched["quality"] == "raw"
 
 
+def test_upload_bytes_sanitises_invalid_tag_values(storage_client) -> None:
+    """A tag value with chars S3 forbids (comma, accent) must not break upload.
+
+    They are sanitised to the S3-safe set (invalid char -> '_'); the verbatim
+    value still lives in the SigMF metadata, not the tag.
+    """
+    storage_client.upload_bytes(
+        "with_tricky_tags.txt",
+        b"hello",
+        tags={"location": "LASSENA, ETS Montréal", "signal-type": "test_banc"},
+    )
+    fetched = storage_client.get_object_tags("with_tricky_tags.txt")
+    assert fetched["signal-type"] == "test_banc"
+    # Comma and accented 'é' are replaced; spaces are preserved.
+    assert fetched["location"] == "LASSENA_ ETS Montr_al"
+
+
 def test_upload_bytes_without_metadata_returns_empty_dict(storage_client) -> None:
     """An object uploaded without metadata returns an empty metadata dict."""
     storage_client.upload_bytes("no_meta.txt", b"hello")
