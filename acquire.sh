@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# One-call acquisition: prepares EVERYTHING then captures from a JSON config.
+# One-call acquisition. Works BOTH:
+#   - locally  : MinIO runs in Docker on this PC (AEROLAKE_S3_ENDPOINT=localhost)
+#   - deployed : MinIO runs on the lab NAS (AEROLAKE_S3_ENDPOINT=http://nas:9000)
+# It detects which from the .env endpoint and skips the local-Docker step when
+# MinIO is remote.
 #
 #   ./acquire.sh examples/test-complet.json
-#
-# Chains the steps so you only type one line:
-#   1. Docker daemon  (starts Docker Desktop if it isn't running)
-#   2. RTL-SDR USB    (attaches it to WSL via usbipd, if not already attached)
-#   3. SoapySDR bridge into the venv (idempotent; needed after any `uv sync`)
-#   4. MinIO up       (the lakehouse)
-#   5. healthcheck    (stops here if storage is unreachable)
-#   6. the capture    (aerolake-capture --config <file>)
 set -euo pipefail
 
 CONFIG="${1:-examples/test-rtlsdr.json}"
@@ -21,52 +17,56 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 2
 fi
 
-# --- 1. Docker daemon (lance Docker Desktop si besoin) --------------------
-echo "▶ 1/6  Docker…"
-if ! docker info >/dev/null 2>&1; then
-  echo "    Docker non démarré — lancement de Docker Desktop…"
-  cmd.exe /c start "" "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe" >/dev/null 2>&1 || true
-  printf "    attente du démon Docker"
-  for _ in $(seq 1 60); do
-    if docker info >/dev/null 2>&1; then printf " ✓\n"; break; fi
-    printf "."; sleep 2
-  done
-  docker info >/dev/null 2>&1 || {
-    printf "\n✗ Docker ne répond pas. Démarre Docker Desktop à la main puis relance.\n" >&2
-    exit 1
-  }
+# Local vs remote MinIO, read from the .env endpoint.
+ENDPOINT="$(grep -E '^AEROLAKE_S3_ENDPOINT=' .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/[" ]//g' || true)"
+case "$ENDPOINT" in
+  *localhost*|*127.0.0.1*|"") LOCAL_MINIO=1 ;;
+  *)                          LOCAL_MINIO=0 ;;
+esac
+
+# --- Docker + MinIO : seulement si MinIO est LOCAL -------------------------
+if [[ "$LOCAL_MINIO" == "1" ]]; then
+  echo "▶ Docker + MinIO (local)…"
+  if ! docker info >/dev/null 2>&1; then
+    echo "    Docker non démarré — lancement de Docker Desktop…"
+    cmd.exe /c start "" "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe" >/dev/null 2>&1 || true
+    printf "    attente du démon Docker"
+    for _ in $(seq 1 60); do
+      if docker info >/dev/null 2>&1; then printf " ✓\n"; break; fi
+      printf "."; sleep 2
+    done
+    docker info >/dev/null 2>&1 || {
+      printf "\n✗ Docker ne répond pas. Démarre Docker Desktop puis relance.\n" >&2
+      exit 1
+    }
+  fi
+  ( cd docker && docker compose up -d )
+else
+  echo "▶ MinIO distant : ${ENDPOINT} (pas de Docker local)"
 fi
 
-# --- 2. RTL-SDR attaché à WSL (usbipd) ------------------------------------
-# WSL2 ne voit pas l'USB par défaut. On attache le RTL-SDR s'il ne l'est pas
-# déjà (par VID:PID, donc peu importe le port). 'bind' est persistant et déjà
-# fait ; seul 'attach' doit être refait après un débranchement/redémarrage.
-echo "▶ 2/6  RTL-SDR (USB → WSL)…"
+# --- RTL-SDR attaché à WSL (usbipd) — Windows/WSL uniquement --------------
+echo "▶ RTL-SDR (USB)…"
 if lsusb 2>/dev/null | grep -qiE "2838|rtl"; then
-  echo "    déjà attaché ✓"
+  echo "    déjà visible ✓"
 else
   usbipd.exe attach --wsl --hardware-id "$RTLSDR_HWID" >/dev/null 2>&1 || true
   sleep 2
   if lsusb 2>/dev/null | grep -qiE "2838|rtl"; then
     echo "    attaché ✓"
   else
-    echo "    ⚠ RTL-SDR pas détecté (branché ? source synthétique ? autre SDR ?)."
-    echo "      Au besoin, à la main en PowerShell : usbipd attach --wsl --busid 1-1"
+    echo "    ⚠ RTL-SDR non détecté (branché ? source synthétique ? autre SDR ?)."
   fi
 fi
 
-# --- 3. Pont SoapySDR dans le venv ----------------------------------------
-echo "▶ 3/6  SoapySDR…"
+# --- Pont SoapySDR dans le venv -------------------------------------------
+echo "▶ SoapySDR…"
 bash setup-soapy.sh
 
-# --- 4. MinIO (le lakehouse) ----------------------------------------------
-echo "▶ 4/6  MinIO…"
-( cd docker && docker compose up -d )
-
-# --- 5. Healthcheck -------------------------------------------------------
-echo "▶ 5/6  Healthcheck…"
+# --- Healthcheck (vérifie le MinIO ciblé, local OU NAS) -------------------
+echo "▶ Healthcheck…"
 uv run aerolake-healthcheck
 
-# --- 6. Capture -----------------------------------------------------------
-echo "▶ 6/6  Capture (config : $CONFIG)…"
+# --- Capture --------------------------------------------------------------
+echo "▶ Capture (config : $CONFIG)…"
 uv run aerolake-capture --config "$CONFIG"
