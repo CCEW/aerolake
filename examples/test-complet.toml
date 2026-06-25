@@ -1,0 +1,33 @@
+# Capture banc RTL-SDR — générateur câblé direct (sans antenne).
+# Équivalent TOML de test-complet.json.   Lancer : ./acquire.sh examples/test-complet.toml
+
+signal_type        = "test_banc"
+signal_type_detail = "tonalité CW"
+center_freq        = 1_575_420_000     # Hz
+sample_rate        = 2_000_000         # Hz
+duration_s         = 10                # secondes
+
+author      = "Theo Schmitt <theo.schmitt02@gmail.com>"
+description = "Capture banc RTL-SDR — generateur cable direct (sans antenne)"
+license     = "https://creativecommons.org/licenses/by-sa/4.0/"
+operator    = "schmitt"
+
+[source]
+type   = "soapy"
+driver = "rtlsdr"
+agc    = true
+
+[location]
+name   = "LASSENA, ETS Montreal"
+mobile = false
+
+[location.geolocation]
+latitude  = 45.4946
+longitude = -73.5623
+altitude  = 50.0
+
+[annotation]
+label           = "tonalite banc"
+comment         = "CW generateur cable direct"
+freq_lower_edge = 1_575_170_000
+freq_upper_edge = 1_575_670_000

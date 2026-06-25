@@ -1,7 +1,8 @@
-"""Tests for the JSON capture-config loader.
+"""Tests for the TOML/JSON capture-config loader.
 
-Cover the one valid path and the three failure modes the loader must turn into
-a clean ConfigError: missing file, malformed JSON, and schema violation.
+Cover the valid paths (TOML and JSON) and the failure modes the loader must
+turn into a clean ConfigError: missing file, malformed TOML/JSON, and schema
+violation. TOML and JSON must produce an identical CaptureConfig.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ def test_non_object_top_level_raises_config_error(tmp_path) -> None:
     path = tmp_path / "list.json"
     path.write_text("[1, 2, 3]", encoding="utf-8")
 
-    with pytest.raises(ConfigError, match="JSON object"):
+    with pytest.raises(ConfigError, match="object at the top"):
         load_capture_config(path)
 
 
@@ -75,4 +76,60 @@ def test_unknown_field_raises_config_error(tmp_path) -> None:
     path.write_text(json.dumps(bad), encoding="utf-8")
 
     with pytest.raises(ConfigError):
+        load_capture_config(path)
+
+
+# ---------------------------------------------------------------------------
+# TOML support (recommended format; chosen by the .toml extension)
+# ---------------------------------------------------------------------------
+
+_VALID_TOML = """
+# a comment, which JSON could never carry
+signal_type = "gnss_l1"
+center_freq = 1_575_420_000   # Hz
+sample_rate = 2_000_000
+duration_s  = 10
+
+[source]
+type   = "soapy"
+driver = "bladerf"
+"""
+
+
+def test_loads_a_valid_toml_config(tmp_path) -> None:
+    path = tmp_path / "capture.toml"
+    path.write_text(_VALID_TOML, encoding="utf-8")
+
+    config = load_capture_config(path)
+
+    assert isinstance(config, CaptureConfig)
+    assert config.signal_type == "gnss_l1"
+    assert config.center_freq == GNSS_L1
+    assert config.source.driver == "bladerf"
+
+
+def test_toml_and_json_describe_the_same_config(tmp_path) -> None:
+    # The same capture, written in each format, must validate identically.
+    jpath = tmp_path / "c.json"
+    jpath.write_text(json.dumps(_valid_dict()), encoding="utf-8")
+    tpath = tmp_path / "c.toml"
+    tpath.write_text(_VALID_TOML, encoding="utf-8")
+
+    assert load_capture_config(tpath).model_dump() == load_capture_config(jpath).model_dump()
+
+
+def test_malformed_toml_raises_config_error(tmp_path) -> None:
+    path = tmp_path / "broken.toml"
+    path.write_text("signal_type = ", encoding="utf-8")  # value missing
+
+    with pytest.raises(ConfigError, match="Invalid TOML"):
+        load_capture_config(path)
+
+
+def test_toml_schema_violation_raises_config_error(tmp_path) -> None:
+    path = tmp_path / "invalid.toml"
+    # center_freq missing -> schema violation surfaced as ConfigError
+    path.write_text('signal_type = "x"\nsample_rate = 1.0\nduration_s = 1.0\n', encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="not a valid capture request"):
         load_capture_config(path)

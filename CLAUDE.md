@@ -81,6 +81,9 @@ The pipeline is **Producer → MinIO → Consumer**. Three packages under `src/a
   `preview.py` (`render_spectrum_png`) renders a spectrum+waterfall PNG; `push_capture(with_preview=True)`
   stores it next to the capture (`…-preview.png`) so the lakehouse is browsable at a glance — best-effort
   (a preview failure never fails the capture), used by `aerolake-capture`.
+  `config_loader.py` (`load_capture_config`) loads an `aerolake-capture` config into a validated
+  `CaptureConfig`: **TOML (recommended, allows inline comments) or JSON**, chosen by the file extension
+  (`.toml` → stdlib `tomllib`, no extra dependency; anything else → JSON). Templates live in `examples/`.
 - **`consumer/`** — `reader.py` (`CaptureReader`): list/inspect/read captures, `read_segment()`
   for **partial/seeked reads** (HTTP Range — fetch only a `start_s`/`duration_s` window, ADR-009).
   `player.py`

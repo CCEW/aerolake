@@ -16,10 +16,9 @@ from aerolake.producer.config_loader import load_capture_config
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
 
-EXAMPLE_FILES = [
-    EXAMPLES_DIR / "capture.example.json",
-    EXAMPLES_DIR / "capture.full.json",
-]
+# Every shipped config, in both formats — so a TOML *or* JSON template can never
+# silently fall out of sync with the schema.
+EXAMPLE_FILES = sorted([*EXAMPLES_DIR.glob("*.json"), *EXAMPLES_DIR.glob("*.toml")])
 
 
 @pytest.mark.parametrize("path", EXAMPLE_FILES, ids=lambda p: p.name)

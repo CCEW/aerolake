@@ -1,24 +1,32 @@
 # Capture configuration files
 
-`aerolake-capture --config <file>.json` records a capture described entirely by
-a JSON file. Copy one of the templates here, fill in your values, and run it.
+`aerolake-capture --config <file>` records a capture described entirely by a
+config file. Two formats are accepted, chosen by the file extension:
+
+- **`.toml` — recommended.** TOML allows *comments*, so each field can be
+  documented inline — much friendlier when someone else reads or edits a capture.
+- **`.json` — still supported**, for backward compatibility.
+
+Copy one of the templates here, fill in your values, and run it.
 
 ```bash
-cp examples/capture.example.json my_capture.json
-# edit my_capture.json
-uv run aerolake-capture --config my_capture.json
+cp examples/capture.example.toml my_capture.toml
+# edit my_capture.toml  (comments explain every field)
+uv run aerolake-capture --config my_capture.toml
 ```
 
 After the capture, a summary is shown and you are asked whether to push it to
 MinIO. If you decline, you can keep it on disk (under `captures/`) instead.
 
-Two templates are provided:
+Templates provided:
 
-- **`capture.example.json`** — the minimal set to get started.
-- **`capture.full.json`** — every supported field, with example values. Delete
-  what you don't need; anything omitted is simply left out of the metadata.
+- **`capture.example.toml`** — minimal, fully commented (start here).
+- **`test-complet.toml`** — a real RTL-SDR bench capture, ready to run.
+- **`capture.example.json` / `capture.full.json`** — the JSON equivalents
+  (`capture.full.json` shows every supported field at once).
 
-JSON does not allow comments, so each field is documented below instead.
+The TOML templates document each field inline; the same fields are also tabulated
+below (they apply to both formats).
 
 ## Required fields
 
