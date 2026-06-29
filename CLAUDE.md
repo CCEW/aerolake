@@ -183,6 +183,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-015 — OOP `SdrRecorder` wrapper over SoapySDR (device lifecycle as one object; injectable `device_opener` for hardware-free tests; `capture_from_sdr` kept as a shim)
 - ADR-016 — SigMF-native geolocation from gpsd (avoid the "GPSD trap": live fix → validated `core:geolocation`, None when no fix; injectable gpsd reader)
 - ADR-018 — **remove the quality/validation layer** (user opts in to saving each acquisition; supersedes ADR-004/005)
+- ADR-019 — **record/playback division of labour**: GNU Radio owns the RF edges (heavy record + RF re-emission), AeroLake owns the lakehouse (store/catalog/serve + software & visual playback); the `.sigmf-data` file is the contract (refines ADR-007/012)
 
 ## Testing notes
 

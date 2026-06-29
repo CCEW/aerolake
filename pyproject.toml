@@ -30,6 +30,15 @@ aerolake-collection = "aerolake.scripts.collection:main"
 aerolake-play = "aerolake.scripts.play:main"
 aerolake-stream = "aerolake.scripts.stream:main"
 aerolake-subscribe = "aerolake.scripts.subscribe:main"
+aerolake-gui = "aerolake.gui.app:run"
+
+# Optional extra: the Streamlit web GUI (a click-to-capture front-end for
+# non-technical users). Kept out of the core deps so a CLI-only install stays
+# lean. Install with:  uv sync --extra gui
+[project.optional-dependencies]
+gui = [
+    "streamlit>=1.40.0",
+]
 
 
 [dependency-groups]
@@ -79,5 +88,5 @@ plugins = ["pydantic.mypy"]
 # Third-party libraries that ship no type stubs / py.typed marker. Without this
 # mypy emits "missing library stubs" errors for imports we don't control.
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "sigmf.*", "SoapySDR.*"]
+module = ["boto3.*", "botocore.*", "sigmf.*", "SoapySDR.*", "streamlit.*"]
 ignore_missing_imports = true
