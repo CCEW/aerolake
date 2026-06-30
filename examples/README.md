@@ -20,7 +20,10 @@ MinIO. If you decline, you can keep it on disk (under `captures/`) instead.
 
 Templates provided:
 
-- **`capture.example.toml`** — minimal, fully commented (start here).
+- **`capture.example.toml`** — minimal, commented (start here).
+- **`capture.full.toml`** — **every supported field**, commented and marked
+  `(obligatoire)`/`(optionnel)`: keep what you need, delete the rest. This is the
+  "fill-or-delete" reference.
 - **`test-complet.toml`** — a real RTL-SDR bench capture, ready to run.
 - **`capture.example.json` / `capture.full.json`** — the JSON equivalents
   (`capture.full.json` shows every supported field at once).

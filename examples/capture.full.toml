@@ -1,0 +1,83 @@
+# =====================================================================
+# AeroLake — TEMPLATE COMPLET de configuration de capture (TOML)
+# ---------------------------------------------------------------------
+# TOUS les champs possibles sont ici. Garde ce qui te sert, SUPPRIME le reste.
+# Règle simple :
+#   • (obligatoire) = doit rester.
+#   • (optionnel)   = supprime la ligne / le bloc si tu n'en as pas besoin
+#                     (absent = simplement pas écrit dans les métadonnées).
+# Tout champ INCONNU est rejeté (sécurité anti-faute de frappe).
+#
+# Lancer :  ./acquire.sh ma_capture.toml      (ou via le GUI : onglet Capture)
+# =====================================================================
+
+# --- Quoi capturer ---------------------------------------------------
+signal_type        = "gnss_l1"          # (obligatoire) catégorie → dossier + tag MinIO (gnss_l1, iridium, starlink, adsb, other…)
+signal_type_detail = "L1 C/A"           # (optionnel)   précision libre (utile si signal_type = "other")
+center_freq        = 1_575_420_000      # (obligatoire) fréquence centrale en Hz
+sample_rate        = 2_000_000          # (obligatoire) échantillonnage en Hz (= bande captée)
+duration_s         = 10                 # (obligatoire) durée en secondes
+
+# --- Métadonnées descriptives (toutes optionnelles) ------------------
+author      = "Théo Schmitt <theo.schmitt@lassena.etsmtl.ca>"   # (optionnel) core:author
+description = "Capture GNSS L1, ciel dégagé, antenne active sur le toit"  # (optionnel) core:description
+license     = "https://creativecommons.org/licenses/by-sa/4.0/"  # (optionnel) core:license (URL) — adapte à la politique du labo
+operator    = "schmitt"                 # (optionnel) défaut = ton login système
+
+# --- Source : d'où vient le signal -----------------------------------
+# (optionnel — si tout le bloc [source] est absent, une source synthétique est utilisée)
+# Variante A : VRAI SDR via SoapySDR
+[source]
+type    = "soapy"                       # (obligatoire dans le bloc)
+driver  = "rtlsdr"                      # (optionnel, défaut rtlsdr) pilote : rtlsdr, bladerf, hackrf…
+agc     = true                          # (optionnel, défaut true)  gain auto
+antenna = "RX"                          # (optionnel) port d'antenne du SDR (ex. RX2 sur BladeRF) ; supprime si défaut
+
+# Variante B : SIGNAL SYNTHÉTIQUE (aucun matériel). Pour l'utiliser : supprime le
+# bloc [source] ci-dessus et décommente celui-ci.
+# [source]
+# type           = "synthetic"
+# tone_offset_hz = 100_000              # (optionnel) décalage de la tonalité vs center_freq
+# snr_db         = 20.0                 # (optionnel) rapport signal/bruit
+# seed           = 1                    # (optionnel) graine aléatoire (capture reproductible)
+
+# --- Où : lieu de la capture (bloc optionnel) ------------------------
+[location]
+name   = "Toit LASSENA, ETS Montréal"   # (obligatoire si le bloc est présent) ; devient aussi un tag cherchable
+mobile = false                          # (optionnel, défaut false) true si le récepteur bouge (véhicule)
+gps    = false                          # (optionnel, défaut false) true = position lue EN DIRECT depuis gpsd
+                                        #   ⚠ exclusif avec [location.geolocation] : l'un OU l'autre, pas les deux.
+
+# Position manuelle (optionnelle) — SUPPRIME ce bloc si gps = true
+[location.geolocation]
+latitude  = 45.4946                     # (obligatoire dans le bloc) degrés -90..90
+longitude = -73.5623                    # (obligatoire dans le bloc) degrés -180..180
+altitude  = 50.0                        # (optionnel) mètres
+
+# --- Annotation décrivant toute la capture (bloc optionnel) ----------
+[annotation]
+label           = "GPS L1 C/A"          # (optionnel) libellé court
+comment         = "antenne active, ciel dégagé"  # (optionnel) commentaire libre
+freq_lower_edge = 1_574_420_000         # (optionnel) bande occupée — bord bas (Hz)
+freq_upper_edge = 1_576_420_000         # (optionnel) bord haut (Hz)  ⚠ les DEUX bords ensemble, ou aucun
+
+# --- Extension antenne SigMF (bloc optionnel) ------------------------
+# Si le bloc est présent, `model` est obligatoire ; tout le reste est optionnel.
+[antenna]
+model                        = "Tallysman TW3742"     # (obligatoire si bloc présent)
+type                         = "active GNSS patch"    # (optionnel)
+low_frequency                = 1_525_000_000          # (optionnel) Hz
+high_frequency               = 1_610_000_000          # (optionnel) Hz
+gain                         = 28.0                   # (optionnel) dBi
+horizontal_beam_width        = 100.0                  # (optionnel) degrés
+vertical_beam_width          = 100.0                  # (optionnel) degrés
+cross_polar_discrimination   = 20.0                   # (optionnel) dB
+voltage_standing_wave_ratio  = 1.5                    # (optionnel) VSWR
+cable_loss                   = 2.0                    # (optionnel) dB
+steerable                    = false                  # (optionnel)
+mobile                       = false                  # (optionnel)
+hagl                         = 1.5                    # (optionnel) hauteur du centre de phase au-dessus du sol (m)
+# Les 3 suivants décrivent le POINTAGE → l'encodeur les place dans l'annotation (pas le bloc antenne global) :
+polarization                 = "right-hand circular" # (optionnel)
+azimuth_angle                = 90.0                   # (optionnel) degrés depuis le Nord
+elevation_angle              = 45.0                   # (optionnel) degrés depuis l'horizontale
