@@ -346,17 +346,24 @@ def _load_uploaded(uploaded: st.runtime.uploaded_file_manager.UploadedFile) -> C
             Path(tmp_path).unlink(missing_ok=True)
 
 
-def _do_capture(config: CaptureConfig) -> None:
+def _do_capture(
+    config: CaptureConfig, geolocation_override: dict[str, object] | None = None
+) -> None:
     """Run prepare_capture (acquire + encode) and stash the result in session.
 
     Mirrors the CLI: resolve geolocation, flatten metadata, prepare. Nothing is
-    stored yet — the user decides afterwards (push / keep / discard).
+    stored yet — the user decides afterwards (push / keep / discard). If the map
+    picker supplied a point, it overrides the config's geolocation.
     """
-    try:
-        geolocation = _resolve_geolocation(config)
-    except RuntimeError as exc:  # gpsd requested but unreachable
-        st.error(f"Erreur GPS : {exc}")
-        return
+    geolocation: dict[str, object] | None
+    if geolocation_override is not None:
+        geolocation = geolocation_override
+    else:
+        try:
+            geolocation = _resolve_geolocation(config)
+        except RuntimeError as exc:  # gpsd requested but unreachable
+            st.error(f"Erreur GPS : {exc}")
+            return
 
     location_name = config.location.name if config.location is not None else None
     mobile = config.location.mobile if config.location is not None else False
@@ -381,6 +388,51 @@ def _do_capture(config: CaptureConfig) -> None:
 
     st.session_state.prepared = prepared
     st.session_state.preview = _spectrum_png(prepared)
+
+
+def _location_picker(config: CaptureConfig) -> dict[str, object] | None:
+    """Optional click-to-pick map: returns a GeoJSON Point for the antenna spot.
+
+    Uses streamlit-folium (a Leaflet map). The user clicks where the antenna is
+    and we read the click's lat/lon — no GPS hardware, no typing. Degrades
+    gracefully (returns None) if the map component is unavailable or errors, so
+    a capture still works from the config's own geolocation.
+    """
+    try:
+        import folium
+        from streamlit_folium import st_folium
+    except Exception:
+        return None
+
+    geo = config.location.geolocation if config.location is not None else None
+    picked = st.session_state.get("picked_latlon")
+    if picked is not None:
+        center = picked
+    elif geo is not None:
+        center = (geo.latitude, geo.longitude)
+    else:
+        center = (45.5017, -73.5673)  # Montréal
+
+    with st.expander("📍 Régler la position de l'antenne sur la carte (optionnel)"):
+        st.caption("Clique l'emplacement exact de l'antenne (zoome pour la précision).")
+        fmap = folium.Map(location=list(center), zoom_start=15)
+        folium.Marker(list(center), tooltip="Antenne").add_to(fmap)
+        try:
+            data = st_folium(fmap, height=320, width=700, key="locmap")
+        except Exception:
+            st.caption("Carte indisponible (hors-ligne ?).")
+            data = None
+        if data and data.get("last_clicked"):
+            lat = float(data["last_clicked"]["lat"])
+            lon = float(data["last_clicked"]["lng"])
+            st.session_state.picked_latlon = (lat, lon)
+            st.success(f"Position choisie : {lat:.5f}, {lon:.5f}")
+
+    picked = st.session_state.get("picked_latlon")
+    if picked is not None:
+        # GeoJSON Point coordinates are [longitude, latitude] (the SigMF order).
+        return {"type": "Point", "coordinates": [picked[1], picked[0]]}
+    return None
 
 
 def _render_result(prepared: PreparedCapture) -> None:
@@ -455,9 +507,13 @@ def _render_capture() -> None:
         col_label.markdown(f"**{label}**")
         col_value.write(value)
 
+    # Optional: let the user click the antenna spot on a map. A picked point
+    # overrides whatever geolocation the config carries.
+    geo_override = _location_picker(config)
+
     # Step 3 — launch. The button only returns True on the run where it's clicked.
     if st.button("▶  Démarrer la capture", type="primary", use_container_width=True):
-        _do_capture(config)
+        _do_capture(config, geo_override)
 
     # Step 4/5 — if a capture is prepared (this run or a previous one), show the
     # recap, the spectrum, and the push / keep / discard actions.

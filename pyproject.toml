@@ -38,6 +38,7 @@ aerolake-gui = "aerolake.gui.app:run"
 [project.optional-dependencies]
 gui = [
     "streamlit>=1.40.0",
+    "streamlit-folium>=0.20.0",  # click-to-pick map for the antenna location
 ]
 
 
@@ -88,5 +89,5 @@ plugins = ["pydantic.mypy"]
 # Third-party libraries that ship no type stubs / py.typed marker. Without this
 # mypy emits "missing library stubs" errors for imports we don't control.
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "sigmf.*", "SoapySDR.*", "streamlit.*"]
+module = ["boto3.*", "botocore.*", "sigmf.*", "SoapySDR.*", "streamlit.*", "folium.*", "streamlit_folium.*"]
 ignore_missing_imports = true
