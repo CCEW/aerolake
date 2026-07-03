@@ -68,6 +68,11 @@ une carte, capturer, revoir le spectre, pousser dans MinIO / garder / jeter) et
 **Playback** (parcourir le lakehouse, visualiser le spectre de n'importe quelle
 fenêtre via HTTP Range, commande ZeroMQ prête, export SigMF pour GNU Radio).
 
+**Sans terminal (Windows + WSL)** : double-cliquer **`launch-gui.vbs`** — démarre
+le GUI en arrière-plan (aucune fenêtre) et ouvre le navigateur. Pour un
+démarrage automatique au boot du poste : mettre un raccourci vers
+`launch-gui.vbs` dans le dossier `shell:startup` (Win+R → `shell:startup`).
+
 ## Qualité / tests
 
     uv run ruff check .

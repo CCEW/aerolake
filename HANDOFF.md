@@ -73,6 +73,9 @@ Aujourd'hui MinIO tourne en Docker **en local**. Pour qu'il survive :
 ```bash
 uv sync --extra gui && uv run aerolake-gui    # à lancer UNE fois sur le poste d'acquisition
 ```
+Sous Windows : **double-cliquer `launch-gui.vbs`** à la racine du repo fait tout
+ça sans terminal (démarrage caché + navigateur). Un raccourci vers ce fichier
+dans `shell:startup` = GUI lancé automatiquement au boot du poste.
 Chacun ouvre ensuite `http://<poste>:8501` dans son navigateur : déposer une
 config TOML/JSON → (option) cliquer la position de l'antenne sur la carte →
 Démarrer → revoir le spectre → Pousser dans MinIO / Garder / Jeter. Un onglet
@@ -101,8 +104,6 @@ uv run ruff check .   &&   uv run mypy src   &&   uv run pytest
 ```
 
 ## 8. Évolutions prévues (non faites)
-- **GUI : auto-démarrage au boot** du poste d'acquisition (service/raccourci),
-  pour le « zéro-terminal » total — le GUI lui-même est **fait** (voir §5).
 - **GUI : formulaire de config** (fréquence/durée → génère le TOML) pour ne plus
   manipuler de fichier du tout ; la carte cliquable en était la première brique.
 - **Ré-émission RF** : GNU Radio + BladeRF TX, câblé + atténué — avec Camelia
