@@ -1,0 +1,13 @@
+# Streamlit theme for the AeroLake GUI — dark base + LASSENA green accent,
+# matching the weekly-meeting slide deck.
+[theme]
+base = "dark"
+primaryColor = "#158C01"          # LASSENA green (buttons, accents)
+backgroundColor = "#0E1117"       # main dark background
+secondaryBackgroundColor = "#1A1D23"  # cards / widgets
+textColor = "#FAFAFA"
+font = "sans serif"
+
+[server]
+# Don't auto-open a browser when launched on a headless acquisition station.
+headless = true

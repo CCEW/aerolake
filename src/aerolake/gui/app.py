@@ -32,7 +32,6 @@ import tempfile
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from aerolake.common.storage import StorageClient, StorageError
 from aerolake.consumer.reader import CaptureReader
@@ -69,8 +68,8 @@ _CSS = """
 [data-testid="stAppViewContainer"], [data-testid="stMain"],
 section.main, .block-container { background: transparent !important; }
 
-/* Pin the ColorBends component iframe as a fixed, full-viewport background.
-   components.html renders via srcdoc, so iframe[srcdoc] targets it precisely. */
+/* Pin the ColorBends iframe as a fixed, full-viewport background.
+   st.iframe renders HTML content via srcdoc, so iframe[srcdoc] targets it. */
 iframe[srcdoc] {
   position: fixed !important; inset: 0 !important;
   width: 100vw !important; height: 100vh !important;
@@ -149,11 +148,11 @@ def _inject_css() -> None:
 
 # reactbits "ColorBends" — a WebGL/three.js fragment shader: warped, animated
 # colour bands with grain (real depth + texture). Streamlit can't run three.js
-# in st.markdown, so we run it inside an iframe via components.html and CSS-pin
-# that iframe as a fixed full-screen background (see the iframe[srcdoc] rule in
-# the stylesheet). The GLSL is the upstream ColorBends shader; only the props
-# and palette are ours (LASSENA green + teal). Needs the browser online to
-# fetch three.js from a CDN.
+# in st.markdown, so we run it inside an iframe via st.iframe and CSS-pin that
+# iframe as a fixed full-screen background (see the iframe[srcdoc] rule in the
+# stylesheet). The GLSL is the upstream ColorBends shader; only the props and
+# palette are ours (LASSENA green + teal). Needs the browser online to fetch
+# three.js from a CDN.
 _COLORBENDS_HTML = """
 <!doctype html><html><head><meta charset="utf-8">
 <style>html,body{margin:0;height:100%;overflow:hidden;background:#06080c}
@@ -256,7 +255,7 @@ requestAnimationFrame(loop);
 
 def _render_background() -> None:
     """Render the ColorBends WebGL shader as a fixed full-screen background."""
-    components.html(_COLORBENDS_HTML, height=1)
+    st.iframe(_COLORBENDS_HTML, height=1)
 
 
 def _render_header() -> None:
