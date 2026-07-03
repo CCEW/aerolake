@@ -25,6 +25,7 @@ def _frame(n: int = 8) -> np.ndarray:
 
 # --- Pure wire format ----------------------------------------------------
 
+
 def test_encode_decode_roundtrip() -> None:
     samples = _frame()
     parts = encode_frame("gnss_l1", {"index": 3, "n": 8, "dtype": "complex64"}, samples)
@@ -36,6 +37,7 @@ def test_encode_decode_roundtrip() -> None:
 
 
 # --- FramePublisher with a fake socket -----------------------------------
+
 
 class _FakeSocket:
     def __init__(self) -> None:
@@ -70,6 +72,7 @@ def test_publisher_close_closes_socket() -> None:
 
 
 # --- Real PUB/SUB over inproc -------------------------------------------
+
 
 def test_real_pubsub_roundtrip() -> None:
     """A real SUB receives what a real FramePublisher (PUB) sends."""
@@ -106,11 +109,10 @@ def test_real_pubsub_roundtrip() -> None:
 
 # --- Radio context in the frame header (center_freq + sample_rate) -------
 
+
 def test_header_includes_radio_context_when_set() -> None:
     sock = _FakeSocket()
-    pub = FramePublisher(
-        sock, "gnss_l1", center_freq=1_575_420_000.0, sample_rate=2_000_000.0
-    )
+    pub = FramePublisher(sock, "gnss_l1", center_freq=1_575_420_000.0, sample_rate=2_000_000.0)
     pub.publish(0, _frame())
     _, header, _ = decode_frame(sock.sent[0])
     assert header["center_freq"] == 1_575_420_000.0
@@ -130,9 +132,7 @@ def test_header_omits_radio_context_when_absent() -> None:
 
 def test_radio_context_repeated_on_every_frame() -> None:
     sock = _FakeSocket()
-    pub = FramePublisher(
-        sock, "iridium", center_freq=1_626_270_000.0, sample_rate=2_000_000.0
-    )
+    pub = FramePublisher(sock, "iridium", center_freq=1_626_270_000.0, sample_rate=2_000_000.0)
     for i in range(3):
         pub.publish(i, _frame())
     for parts in sock.sent:

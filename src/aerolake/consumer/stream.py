@@ -34,9 +34,7 @@ import zmq
 logger = structlog.get_logger(__name__)
 
 
-def encode_frame(
-    topic: str, header: dict[str, Any], samples: np.ndarray
-) -> list[bytes]:
+def encode_frame(topic: str, header: dict[str, Any], samples: np.ndarray) -> list[bytes]:
     """Serialise one frame into a 3-part ZeroMQ multipart message."""
     return [
         topic.encode("utf-8"),
@@ -98,9 +96,7 @@ class FramePublisher:
         context = zmq.Context.instance()
         socket = context.socket(zmq.PUB)
         socket.bind(address)
-        return cls(
-            socket, topic, center_freq=center_freq, sample_rate=sample_rate
-        )
+        return cls(socket, topic, center_freq=center_freq, sample_rate=sample_rate)
 
     def publish(self, index: int, frame: np.ndarray) -> None:
         """Send one frame as a multipart message (matches on_frame signature)."""

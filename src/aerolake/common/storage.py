@@ -42,9 +42,7 @@ def _tagging_header(tags: dict[str, str]) -> str:
     travel safely (the previous manual ``k=v&…`` join did neither, which broke
     uploads whenever a value contained a space or comma — e.g. a location).
     """
-    return urlencode(
-        {k: _safe_tag_value(v) for k, v in tags.items()}, quote_via=quote
-    )
+    return urlencode({k: _safe_tag_value(v) for k, v in tags.items()}, quote_via=quote)
 
 
 class StorageError(Exception):
@@ -110,15 +108,11 @@ class StorageClient:
             self._client.head_bucket(Bucket=self.bucket)
         except EndpointConnectionError as exc:
             log.error("storage.healthcheck.unreachable")
-            raise StorageError(
-                f"Cannot reach S3 endpoint {self._settings.s3_endpoint!r}"
-            ) from exc
+            raise StorageError(f"Cannot reach S3 endpoint {self._settings.s3_endpoint!r}") from exc
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "Unknown")
             log.error("storage.healthcheck.failed", error_code=code)
-            raise StorageError(
-                f"Bucket {self.bucket!r} unreachable: {code}"
-            ) from exc
+            raise StorageError(f"Bucket {self.bucket!r} unreachable: {code}") from exc
         log.info("storage.healthcheck.ok")
         return True
 
@@ -149,9 +143,7 @@ class StorageClient:
     def get_object_tags(self, key: str) -> dict[str, str]:
         """Return the S3 object tags as a dict."""
         try:
-            response = self._client.get_object_tagging(
-                Bucket=self.bucket, Key=key
-            )
+            response = self._client.get_object_tagging(Bucket=self.bucket, Key=key)
         except ClientError as exc:
             raise StorageError(f"get_object_tagging failed for {key!r}") from exc
         return {item["Key"]: item["Value"] for item in response.get("TagSet", [])}
@@ -297,14 +289,10 @@ class StorageClient:
             create_kwargs["Tagging"] = _tagging_header(tags)
 
         try:
-            upload_id = self._client.create_multipart_upload(**create_kwargs)[
-                "UploadId"
-            ]
+            upload_id = self._client.create_multipart_upload(**create_kwargs)["UploadId"]
         except ClientError as exc:
             log.error("storage.multipart.create_failed", error=str(exc))
-            raise StorageError(
-                f"Failed to start multipart upload of {key!r}"
-            ) from exc
+            raise StorageError(f"Failed to start multipart upload of {key!r}") from exc
 
         parts: list[dict] = []
         buffer = bytearray()
@@ -345,14 +333,10 @@ class StorageClient:
         except Exception as exc:
             # Abort so MinIO/S3 doesn't keep the orphaned parts around.
             with contextlib.suppress(ClientError):
-                self._client.abort_multipart_upload(
-                    Bucket=self.bucket, Key=key, UploadId=upload_id
-                )
+                self._client.abort_multipart_upload(Bucket=self.bucket, Key=key, UploadId=upload_id)
             log.error("storage.multipart.failed", error=str(exc))
             if isinstance(exc, ClientError):
-                raise StorageError(
-                    f"Multipart upload of {key!r} failed"
-                ) from exc
+                raise StorageError(f"Multipart upload of {key!r} failed") from exc
             raise  # a non-storage error from the chunk iterator: propagate as-is
 
         log.info("storage.multipart.ok", parts=len(parts), size=total)
@@ -385,15 +369,11 @@ class StorageClient:
         byte_range = f"bytes={start}-{'' if end is None else end}"
         log = logger.bind(bucket=self.bucket, key=key, byte_range=byte_range)
         try:
-            response = self._client.get_object(
-                Bucket=self.bucket, Key=key, Range=byte_range
-            )
+            response = self._client.get_object(Bucket=self.bucket, Key=key, Range=byte_range)
             data: bytes = response["Body"].read()
         except ClientError as exc:
             log.error("storage.download_range.failed", error=str(exc))
-            raise StorageError(
-                f"Failed to range-download {key!r} ({byte_range})"
-            ) from exc
+            raise StorageError(f"Failed to range-download {key!r} ({byte_range})") from exc
         log.info("storage.download_range.ok", size=len(data))
         return data
 
@@ -415,9 +395,7 @@ class StorageClient:
                 for obj in page.get("Contents", []):
                     yield obj["Key"]
         except ClientError as exc:
-            raise StorageError(
-                f"list_objects failed for prefix {prefix!r}"
-            ) from exc
+            raise StorageError(f"list_objects failed for prefix {prefix!r}") from exc
 
     def delete_object(self, key: str) -> None:
         """Delete a single object from the bucket."""

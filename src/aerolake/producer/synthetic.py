@@ -116,14 +116,12 @@ def generate_tone(
     # Pure tone in the complex (IQ) domain.
     # exp(2j*pi*f*t) is a unit-amplitude single-frequency signal that exists
     # ONLY at frequency f, with no mirror image at -f (unlike a real cosine).
-# Pure tone scaled to the requested amplitude. np.exp(...) alone has
+    # Pure tone scaled to the requested amplitude. np.exp(...) alone has
     # unit amplitude (magnitude 1.0 = full scale), which would clip. We
     # multiply by tone_amplitude to set a realistic recording level. The
     # magnitude of every sample becomes exactly tone_amplitude, so the RMS
     # power is 20*log10(tone_amplitude) dBFS (e.g. 0.1 -> -20 dBFS).
-    tone = (
-        tone_amplitude * np.exp(2j * np.pi * tone_offset_hz * t)
-    ).astype(np.complex64)
+    tone = (tone_amplitude * np.exp(2j * np.pi * tone_offset_hz * t)).astype(np.complex64)
     # Additive White Gaussian Noise (AWGN), independent on I and Q channels.
     # noise_amplitude is set so the resulting SNR (in dB) matches snr_db.
     noise_amplitude = 10 ** (-snr_db / 20)

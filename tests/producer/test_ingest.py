@@ -104,6 +104,7 @@ def test_ingest_meta_uploaded_before_data_is_complete(
 
 # --- CLI -----------------------------------------------------------------
 
+
 def test_ingest_cli_happy_path(storage_client: StorageClient, tmp_path, capsys) -> None:
     path = tmp_path / "capture.sigmf-data"
     path.write_bytes(np.zeros(100, dtype=np.complex64).tobytes())
@@ -111,10 +112,14 @@ def test_ingest_cli_happy_path(storage_client: StorageClient, tmp_path, capsys) 
     code = main(
         [
             str(path),
-            "--signal-type", "gnss_l1",
-            "--sample-rate", "2e6",
-            "--center-freq", "1575.42e6",
-            "--hardware", "bladerf",
+            "--signal-type",
+            "gnss_l1",
+            "--sample-rate",
+            "2e6",
+            "--center-freq",
+            "1575.42e6",
+            "--hardware",
+            "bladerf",
         ],
         storage_client=storage_client,
     )
@@ -125,14 +130,22 @@ def test_ingest_cli_happy_path(storage_client: StorageClient, tmp_path, capsys) 
 
 def test_ingest_cli_missing_file_returns_two(storage_client: StorageClient) -> None:
     code = main(
-        ["/nope/does-not-exist.iq", "--signal-type", "x",
-         "--sample-rate", "2e6", "--center-freq", "1e9"],
+        [
+            "/nope/does-not-exist.iq",
+            "--signal-type",
+            "x",
+            "--sample-rate",
+            "2e6",
+            "--center-freq",
+            "1e9",
+        ],
         storage_client=storage_client,
     )
     assert code == 2
 
 
 # --- cs32 (RFSoC int32) + multi-file ingestion ---------------------------
+
 
 def test_ingest_cs32_is_normalised(storage_client: StorageClient, tmp_path) -> None:
     # int32 interleaved I,Q -> normalised by 2**31.
@@ -141,15 +154,19 @@ def test_ingest_cs32_is_normalised(storage_client: StorageClient, tmp_path) -> N
     path.write_bytes(raw.tobytes())
 
     result = ingest_file(
-        file_path=str(path), signal_type="iridium", sample_rate=400e3,
-        center_freq=1626.271e6, datatype="cs32", hardware="rfsoc",
+        file_path=str(path),
+        signal_type="iridium",
+        sample_rate=400e3,
+        center_freq=1626.271e6,
+        datatype="cs32",
+        hardware="rfsoc",
         storage_client=storage_client,
     )
 
     assert result.sample_count == 2
     content = CaptureReader(storage_client).read(result.data_key)
-    assert content.samples[0].real == pytest.approx(0.5)    # 2**30 / 2**31
-    assert content.samples[0].imag == pytest.approx(-1.0)   # -2**31 / 2**31
+    assert content.samples[0].real == pytest.approx(0.5)  # 2**30 / 2**31
+    assert content.samples[0].imag == pytest.approx(-1.0)  # -2**31 / 2**31
 
 
 def test_ingest_files_concatenates_in_order(storage_client: StorageClient, tmp_path) -> None:
@@ -160,7 +177,9 @@ def test_ingest_files_concatenates_in_order(storage_client: StorageClient, tmp_p
 
     result = ingest_files(
         file_paths=[str(tmp_path / "a.bin"), str(tmp_path / "b.bin")],
-        signal_type="iridium", sample_rate=400e3, center_freq=1626e6,
+        signal_type="iridium",
+        sample_rate=400e3,
+        center_freq=1626e6,
         storage_client=storage_client,
     )
 
@@ -175,15 +194,25 @@ def test_resolve_files_sorts_packets_numerically(tmp_path) -> None:
     assert [os.path.basename(f) for f in files] == ["pkt_1.bin", "pkt_2.bin", "pkt_10.bin"]
 
 
-def test_ingest_cli_directory_of_packets(
-    storage_client: StorageClient, tmp_path, capsys
-) -> None:
+def test_ingest_cli_directory_of_packets(storage_client: StorageClient, tmp_path, capsys) -> None:
     for n in (1, 2, 3):
         (tmp_path / f"pkt_{n}.bin").write_bytes(np.zeros(10, dtype=np.complex64).tobytes())
     code = main(
-        [str(tmp_path), "--glob", "pkt_*.bin", "--signal-type", "iridium",
-         "--sample-rate", "400e3", "--center-freq", "1626.271e6",
-         "--datatype", "cf32", "--hardware", "rfsoc"],
+        [
+            str(tmp_path),
+            "--glob",
+            "pkt_*.bin",
+            "--signal-type",
+            "iridium",
+            "--sample-rate",
+            "400e3",
+            "--center-freq",
+            "1626.271e6",
+            "--datatype",
+            "cf32",
+            "--hardware",
+            "rfsoc",
+        ],
         storage_client=storage_client,
     )
     assert code == 0

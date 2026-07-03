@@ -321,9 +321,7 @@ def test_resolve_geolocation_live_gps_uses_injected_reader() -> None:
 def test_resolve_geolocation_falls_back_to_manual_point() -> None:
     from aerolake.scripts.capture import _resolve_geolocation
 
-    config = _config_with_location(
-        geolocation={"latitude": 45.0, "longitude": -73.0}
-    )
+    config = _config_with_location(geolocation={"latitude": 45.0, "longitude": -73.0})
     assert _resolve_geolocation(config) == {
         "type": "Point",
         "coordinates": [-73.0, 45.0],

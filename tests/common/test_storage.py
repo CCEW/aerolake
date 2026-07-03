@@ -14,6 +14,7 @@ from aerolake.common.storage import StorageClient, StorageError
 
 # --- health_check --------------------------------------------------------
 
+
 def test_health_check_returns_true_when_bucket_exists(storage_client: StorageClient) -> None:
     """A reachable, existing bucket should make health_check return True."""
     assert storage_client.health_check() is True
@@ -28,6 +29,7 @@ def test_health_check_raises_when_bucket_missing(test_settings: Settings, mock_s
 
 
 # --- upload_bytes / download_bytes round-trip -----------------------------
+
 
 def test_upload_and_download_roundtrip(storage_client: StorageClient) -> None:
     """Uploaded bytes should be byte-identical when downloaded."""
@@ -46,6 +48,7 @@ def test_download_missing_key_raises(storage_client: StorageClient) -> None:
 
 # --- object_exists --------------------------------------------------------
 
+
 def test_object_exists_returns_true_after_upload(storage_client: StorageClient) -> None:
     """object_exists should return True for an object that was just uploaded."""
     storage_client.upload_bytes("present.txt", b"x")
@@ -58,6 +61,7 @@ def test_object_exists_returns_false_for_missing_key(storage_client: StorageClie
 
 
 # --- list_objects --------------------------------------------------------
+
 
 def test_list_objects_filters_by_prefix(storage_client: StorageClient) -> None:
     """Only objects matching the prefix should be yielded."""
@@ -80,6 +84,7 @@ def test_list_objects_empty_prefix_returns_all(storage_client: StorageClient) ->
 
 # --- delete_object --------------------------------------------------------
 
+
 def test_delete_object_removes_it(storage_client: StorageClient) -> None:
     """After delete_object, object_exists should return False."""
     storage_client.upload_bytes("to_delete.txt", b"bye")
@@ -91,12 +96,14 @@ def test_delete_object_removes_it(storage_client: StorageClient) -> None:
 
 # --- bucket property ------------------------------------------------------
 
+
 def test_bucket_property_returns_configured_bucket(storage_client: StorageClient) -> None:
     """The bucket property should return the value from settings."""
     assert storage_client.bucket == "test-bucket"
 
 
 # --- Metadata and tags ---------------------------------------------------
+
 
 def test_upload_bytes_stores_metadata(storage_client) -> None:
     """Metadata passed to upload_bytes is retrievable via head_object."""
@@ -149,7 +156,10 @@ def test_upload_bytes_without_tags_returns_empty_dict(storage_client) -> None:
     """An object uploaded without tags returns an empty tag dict."""
     storage_client.upload_bytes("no_tags.txt", b"hello")
     assert storage_client.get_object_tags("no_tags.txt") == {}
+
+
 # --- update_tags ----------------------------------------------------------
+
 
 def test_update_tags_replaces_entire_tag_set(
     storage_client: StorageClient,
@@ -201,8 +211,8 @@ def test_update_tags_merge_pattern_preserves_other_tags(
 
     # read -> merge -> write
     current = storage_client.get_object_tags("obj/key.bin")
-    merged = dict(current)            # defensive copy
-    merged["quality"] = "validated"   # change only this one
+    merged = dict(current)  # defensive copy
+    merged["quality"] = "validated"  # change only this one
     storage_client.update_tags("obj/key.bin", merged)
 
     # All three tags survive, only quality changed.

@@ -40,9 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # Either an explicit key or a prefix (whose most recent capture we play).
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--key", help="Exact .sigmf-data key to play.")
-    target.add_argument(
-        "--prefix", help="Play the most recent complete capture under this prefix."
-    )
+    target.add_argument("--prefix", help="Play the most recent complete capture under this prefix.")
     parser.add_argument(
         "--frame-size", type=int, default=4096, help="Samples per frame (default 4096)."
     )

@@ -207,9 +207,7 @@ class CaptureReader:
         # We still need the metadata (datatype + sample rate) to interpret bytes
         # and to convert seconds -> samples -> bytes. The .sigmf-meta is tiny.
         info = self.inspect(data_key)
-        sigmf_meta = json.loads(
-            self._storage.download_bytes(meta_key).decode("utf-8")
-        )
+        sigmf_meta = json.loads(self._storage.download_bytes(meta_key).decode("utf-8"))
 
         datatype = sigmf_meta.get("global", {}).get("core:datatype")
         if datatype not in _SIGMF_DTYPE_TO_NUMPY:
@@ -222,9 +220,7 @@ class CaptureReader:
 
         sample_rate = float(sigmf_meta.get("global", {}).get("core:sample_rate", 0.0))
         if sample_rate <= 0:
-            raise ValueError(
-                f"Cannot seek without a valid core:sample_rate in {data_key!r}"
-            )
+            raise ValueError(f"Cannot seek without a valid core:sample_rate in {data_key!r}")
 
         # How many samples exist in total (size on disk / bytes per sample)?
         total_samples = self._storage.object_size(data_key) // bytes_per_sample
@@ -234,9 +230,7 @@ class CaptureReader:
         if duration_s is None:
             n_samples = total_samples - start_sample
         else:
-            n_samples = min(
-                max(0, int(duration_s * sample_rate)), total_samples - start_sample
-            )
+            n_samples = min(max(0, int(duration_s * sample_rate)), total_samples - start_sample)
 
         if n_samples <= 0:
             # Window is empty (e.g. start past the end) — return no samples.

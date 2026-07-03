@@ -240,9 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     recap.add_column()
     recap.add_row("Samples", f"{prepared.sample_count:,}")
     recap.add_row("Size", f"{prepared.size_bytes / 1e6:.1f} MB")
-    actual_duration = (
-        prepared.sample_count / config.sample_rate if config.sample_rate else 0.0
-    )
+    actual_duration = prepared.sample_count / config.sample_rate if config.sample_rate else 0.0
     recap.add_row("Duration", f"{actual_duration:.2f} s")
     if prepared.overflow_count is not None:
         recap.add_row("Overflows", str(prepared.overflow_count))

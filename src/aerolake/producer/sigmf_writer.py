@@ -82,6 +82,7 @@ class AntennaFields(TypedDict, total=False):
     mobile: bool
     hagl: float
 
+
 # SigMF datatype string for np.complex64.
 # Format: complex float 32-bit little-endian. See SigMF spec, "Datatypes".
 SIGMF_DATATYPE_CF32_LE = "cf32_le"

@@ -37,10 +37,9 @@ def _upload_synthetic_capture(
     """
     # Build random complex64 samples (deterministic via seed).
     rng = np.random.default_rng(seed=42)
-    samples = (
-        rng.normal(0, 1, sample_count)
-        + 1j * rng.normal(0, 1, sample_count)
-    ).astype(np.complex64)
+    samples = (rng.normal(0, 1, sample_count) + 1j * rng.normal(0, 1, sample_count)).astype(
+        np.complex64
+    )
 
     # Minimal valid SigMF metadata.
     sigmf_meta = {
@@ -49,19 +48,19 @@ def _upload_synthetic_capture(
             "core:sample_rate": float(sample_rate),
             "core:version": "1.2.6",
         },
-        "captures": [
-            {"core:sample_start": 0, "core:frequency": float(center_freq)}
-        ],
+        "captures": [{"core:sample_start": 0, "core:frequency": float(center_freq)}],
         "annotations": [],
     }
 
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
     storage_client.upload_bytes(
-        meta_key, json.dumps(sigmf_meta).encode("utf-8"),
+        meta_key,
+        json.dumps(sigmf_meta).encode("utf-8"),
         content_type="application/json",
     )
     storage_client.upload_bytes(
-        data_key, samples.tobytes(),
+        data_key,
+        samples.tobytes(),
         content_type="application/octet-stream",
         metadata={"sample-rate": str(int(sample_rate))} if with_metadata else None,
         tags={"signal-type": "gnss_l1"} if with_tags else None,
@@ -70,6 +69,7 @@ def _upload_synthetic_capture(
 
 
 # --- list_captures -------------------------------------------------------
+
 
 def test_list_captures_returns_only_complete_pairs(
     reader: CaptureReader, storage_client: StorageClient
@@ -105,6 +105,7 @@ def test_list_captures_empty_bucket_returns_empty_list(
 
 # --- inspect -------------------------------------------------------------
 
+
 def test_inspect_returns_metadata_and_tags(
     reader: CaptureReader, storage_client: StorageClient
 ) -> None:
@@ -134,12 +135,13 @@ def test_inspect_returns_empty_dicts_when_none_attached(
 
 # --- read ----------------------------------------------------------------
 
-def test_read_returns_decoded_samples(
-    reader: CaptureReader, storage_client: StorageClient
-) -> None:
+
+def test_read_returns_decoded_samples(reader: CaptureReader, storage_client: StorageClient) -> None:
     """read should return samples byte-identical to the uploaded ones."""
     original_samples = _upload_synthetic_capture(
-        storage_client, "test/capture.sigmf-data", sample_count=512,
+        storage_client,
+        "test/capture.sigmf-data",
+        sample_count=512,
     )
 
     content = reader.read("test/capture.sigmf-data")
@@ -148,9 +150,7 @@ def test_read_returns_decoded_samples(
     np.testing.assert_array_equal(content.samples, original_samples)
 
 
-def test_read_parses_sigmf_metadata(
-    reader: CaptureReader, storage_client: StorageClient
-) -> None:
+def test_read_parses_sigmf_metadata(reader: CaptureReader, storage_client: StorageClient) -> None:
     """read should parse the .sigmf-meta JSON correctly."""
     _upload_synthetic_capture(storage_client, "test/capture.sigmf-data")
 
@@ -166,13 +166,13 @@ def test_read_raises_on_unsupported_datatype(
     """read should raise ValueError if the SigMF datatype is unknown."""
     # Build a fake capture with an unsupported datatype.
     meta = {
-        "global": {"core:datatype": "ci8_le", "core:sample_rate": 1000.0,
-                   "core:version": "1.2.6"},
+        "global": {"core:datatype": "ci8_le", "core:sample_rate": 1000.0, "core:version": "1.2.6"},
         "captures": [{"core:sample_start": 0, "core:frequency": 1000.0}],
         "annotations": [],
     }
     storage_client.upload_bytes(
-        "bad/capture.sigmf-meta", json.dumps(meta).encode("utf-8"),
+        "bad/capture.sigmf-meta",
+        json.dumps(meta).encode("utf-8"),
     )
     storage_client.upload_bytes("bad/capture.sigmf-data", b"\x01\x02\x03\x04")
 

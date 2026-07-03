@@ -31,6 +31,7 @@ _TPV_3D = {
 
 # --- fix_from_tpv --------------------------------------------------------
 
+
 def test_fix_from_tpv_parses_all_fields() -> None:
     fix = fix_from_tpv(_TPV_3D)
     assert fix.mode == 3
@@ -60,6 +61,7 @@ def test_fix_from_tpv_rejects_non_tpv() -> None:
 
 
 # --- fix_to_geolocation (the three traps) --------------------------------
+
 
 def test_3d_fix_yields_point_in_lon_lat_alt_order() -> None:
     geo = fix_to_geolocation(fix_from_tpv(_TPV_3D))
@@ -91,6 +93,7 @@ def test_corrupt_coordinates_are_rejected() -> None:
 
 
 # --- read_geolocation (injected reader) ----------------------------------
+
 
 def test_read_geolocation_with_injected_reader() -> None:
     geo = read_geolocation(reader=lambda: _TPV_3D)

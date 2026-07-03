@@ -17,9 +17,7 @@ def test_multipart_coalesces_small_chunks_and_roundtrips(
     chunks = [bytes([i]) * MIB for i in range(12)]
     expected = b"".join(chunks)
 
-    total = storage_client.upload_multipart(
-        "big/blob", iter(chunks), part_size=8 * MIB
-    )
+    total = storage_client.upload_multipart("big/blob", iter(chunks), part_size=8 * MIB)
 
     assert total == len(expected)
     assert storage_client.download_bytes("big/blob") == expected

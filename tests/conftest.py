@@ -16,6 +16,7 @@ from aerolake.common.storage import StorageClient
 
 # --- Logging --------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _route_logs_to_stderr() -> None:
     """Send structlog output to stderr before every test.
@@ -30,6 +31,7 @@ def _route_logs_to_stderr() -> None:
 
 
 # --- Configuration --------------------------------------------------------
+
 
 @pytest.fixture
 def test_settings() -> Settings:
@@ -48,6 +50,7 @@ def test_settings() -> Settings:
 
 
 # --- Mocked S3 ------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_s3(test_settings: Settings):

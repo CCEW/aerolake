@@ -68,24 +68,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default="*.bin",
         help="When path is a directory, which files to ingest (default '*.bin').",
     )
-    parser.add_argument(
-        "--signal-type", required=True, help="Signal type / prefix (e.g. gnss_l1)."
-    )
-    parser.add_argument(
-        "--sample-rate", type=float, required=True, help="Sample rate in Hz."
-    )
-    parser.add_argument(
-        "--center-freq", type=float, required=True, help="Center frequency in Hz."
-    )
+    parser.add_argument("--signal-type", required=True, help="Signal type / prefix (e.g. gnss_l1).")
+    parser.add_argument("--sample-rate", type=float, required=True, help="Sample rate in Hz.")
+    parser.add_argument("--center-freq", type=float, required=True, help="Center frequency in Hz.")
     parser.add_argument(
         "--datatype",
         choices=["cf32", "cu8", "cs16", "cs32"],
         default="cf32",
         help="Source datatype (default cf32; cu8/cs16/cs32 are converted to cf32).",
     )
-    parser.add_argument(
-        "--hardware", default="unknown", help="Hardware tag (e.g. bladerf, rfsoc)."
-    )
+    parser.add_argument("--hardware", default="unknown", help="Hardware tag (e.g. bladerf, rfsoc).")
     return parser
 
 
@@ -138,8 +130,7 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
     table.add_row("Samples", f"{result.sample_count:,}")
     table.add_row(
         "Uploaded",
-        f"{result.bytes_uploaded:,} bytes "
-        f"({result.bytes_uploaded / 1024 / 1024:.2f} MiB)",
+        f"{result.bytes_uploaded:,} bytes ({result.bytes_uploaded / 1024 / 1024:.2f} MiB)",
     )
     console.print(table)
     return 0

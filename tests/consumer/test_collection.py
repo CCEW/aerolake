@@ -47,9 +47,7 @@ def _seed_recording(
     }
     meta_bytes = json.dumps(sigmf_meta).encode("utf-8")
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
-    storage_client.upload_bytes(
-        meta_key, meta_bytes, content_type="application/json"
-    )
+    storage_client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
     storage_client.upload_bytes(
         data_key, b"\x00\x00\x00\x00", content_type="application/octet-stream"
     )
@@ -58,19 +56,16 @@ def _seed_recording(
 
 # --- scan ----------------------------------------------------------------
 
+
 def test_scan_pairs_complete_and_flags_orphans(
     builder: CollectionBuilder, storage_client: StorageClient
 ) -> None:
     _seed_recording(storage_client, "gnss_l1/2026-06-17/recA/capture.sigmf-data")
     _seed_recording(storage_client, "gnss_l1/2026-06-17/recB/capture.sigmf-data")
     # Orphan 1: a .sigmf-data with no matching .sigmf-meta.
-    storage_client.upload_bytes(
-        "gnss_l1/2026-06-17/orphanData/capture.sigmf-data", b"x"
-    )
+    storage_client.upload_bytes("gnss_l1/2026-06-17/orphanData/capture.sigmf-data", b"x")
     # Orphan 2: a .sigmf-meta with no matching .sigmf-data.
-    storage_client.upload_bytes(
-        "gnss_l1/2026-06-17/orphanMeta/capture.sigmf-meta", b"{}"
-    )
+    storage_client.upload_bytes("gnss_l1/2026-06-17/orphanMeta/capture.sigmf-meta", b"{}")
 
     complete, orphans = builder.scan("gnss_l1/2026-06-17/")
 
@@ -95,12 +90,8 @@ def test_scan_ignores_non_sigmf_objects(
 ) -> None:
     """A quality_report.json / pre-existing collection are not orphans."""
     _seed_recording(storage_client, "gnss_l1/2026-06-17/recA/capture.sigmf-data")
-    storage_client.upload_bytes(
-        "gnss_l1/2026-06-17/recA/quality_report.json", b"{}"
-    )
-    storage_client.upload_bytes(
-        "gnss_l1/2026-06-17/old.sigmf-collection", b"{}"
-    )
+    storage_client.upload_bytes("gnss_l1/2026-06-17/recA/quality_report.json", b"{}")
+    storage_client.upload_bytes("gnss_l1/2026-06-17/old.sigmf-collection", b"{}")
 
     complete, orphans = builder.scan("gnss_l1/2026-06-17/")
 
@@ -110,15 +101,12 @@ def test_scan_ignores_non_sigmf_objects(
 
 # --- build ---------------------------------------------------------------
 
+
 def test_build_hashes_meta_and_builds_relative_names(
     builder: CollectionBuilder, storage_client: StorageClient
 ) -> None:
-    meta_a = _seed_recording(
-        storage_client, "gnss_l1/2026-06-17/recA/capture.sigmf-data"
-    )
-    meta_b = _seed_recording(
-        storage_client, "gnss_l1/2026-06-17/recB/capture.sigmf-data"
-    )
+    meta_a = _seed_recording(storage_client, "gnss_l1/2026-06-17/recA/capture.sigmf-data")
+    meta_b = _seed_recording(storage_client, "gnss_l1/2026-06-17/recB/capture.sigmf-data")
 
     plan = builder.build(
         prefix="gnss_l1/2026-06-17/",
@@ -154,9 +142,7 @@ def test_build_assembles_conformant_collection_object(
     assert coll["core:version"] == SIGMF_VERSION
     assert coll["core:description"] == "desc"
     assert coll["core:author"] == "schmitt"
-    assert coll["core:streams"] == [
-        {"name": "recA/capture", "hash": plan.streams[0].meta_hash}
-    ]
+    assert coll["core:streams"] == [{"name": "recA/capture", "hash": plan.streams[0].meta_hash}]
 
 
 def test_build_omits_optional_fields_when_absent(
@@ -208,13 +194,12 @@ def test_build_empty_prefix_yields_no_streams(
 
 # --- write ---------------------------------------------------------------
 
+
 def test_write_uploads_collection_to_its_key(
     builder: CollectionBuilder, storage_client: StorageClient
 ) -> None:
     _seed_recording(storage_client, "gnss_l1/2026-06-17/recA/capture.sigmf-data")
-    plan = builder.build(
-        prefix="gnss_l1/2026-06-17/", name="june", author="schmitt"
-    )
+    plan = builder.build(prefix="gnss_l1/2026-06-17/", name="june", author="schmitt")
 
     builder.write(plan)
 

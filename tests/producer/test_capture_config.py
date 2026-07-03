@@ -67,9 +67,7 @@ def test_soapy_source_translates_to_params() -> None:
 
 def test_unknown_source_type_is_rejected() -> None:
     with pytest.raises(ValidationError):
-        CaptureConfig.model_validate(
-            {**_minimal(), "source": {"type": "usrp"}}
-        )
+        CaptureConfig.model_validate({**_minimal(), "source": {"type": "usrp"}})
 
 
 def test_geolocation_to_geojson_lon_lat_alt_order() -> None:
@@ -91,15 +89,11 @@ def test_geolocation_rejects_out_of_range() -> None:
 
 
 def test_location_gps_flag_defaults_false_and_parses() -> None:
-    cfg = CaptureConfig.model_validate(
-        {**_minimal(), "location": {"name": "rooftop"}}
-    )
+    cfg = CaptureConfig.model_validate({**_minimal(), "location": {"name": "rooftop"}})
     assert cfg.location is not None
     assert cfg.location.gps is False
 
-    cfg = CaptureConfig.model_validate(
-        {**_minimal(), "location": {"name": "rooftop", "gps": True}}
-    )
+    cfg = CaptureConfig.model_validate({**_minimal(), "location": {"name": "rooftop", "gps": True}})
     assert cfg.location is not None
     assert cfg.location.gps is True
 
@@ -120,9 +114,7 @@ def test_location_gps_and_manual_geolocation_are_mutually_exclusive() -> None:
 
 def test_annotation_requires_both_freq_edges() -> None:
     with pytest.raises(ValidationError):
-        CaptureConfig.model_validate(
-            {**_minimal(), "annotation": {"freq_lower_edge": GNSS_L1}}
-        )
+        CaptureConfig.model_validate({**_minimal(), "annotation": {"freq_lower_edge": GNSS_L1}})
 
 
 def test_annotation_rejects_inverted_edges() -> None:

@@ -81,9 +81,7 @@ def test_encode_still_valid_sigmf_with_namespace() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_capture_defaults_operator_to_session(
-    storage_client: StorageClient, monkeypatch
-) -> None:
+def test_capture_defaults_operator_to_session(storage_client: StorageClient, monkeypatch) -> None:
     monkeypatch.setattr("getpass.getuser", lambda: "alice")
     result = capture_and_upload(
         signal_type="gnss_l1",
@@ -97,9 +95,7 @@ def test_capture_defaults_operator_to_session(
     assert tags["operator"] == "alice"
 
 
-def test_capture_explicit_operator_wins(
-    storage_client: StorageClient, monkeypatch
-) -> None:
+def test_capture_explicit_operator_wins(storage_client: StorageClient, monkeypatch) -> None:
     monkeypatch.setattr("getpass.getuser", lambda: "alice")
     result = capture_and_upload(
         signal_type="gnss_l1",

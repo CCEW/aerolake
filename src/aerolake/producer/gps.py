@@ -83,11 +83,7 @@ class GpsFix:
     @property
     def has_fix(self) -> bool:
         """True when the fix is usable (2D or better, with lat *and* lon)."""
-        return (
-            self.mode >= 2
-            and self.latitude is not None
-            and self.longitude is not None
-        )
+        return self.mode >= 2 and self.latitude is not None and self.longitude is not None
 
     @property
     def is_3d(self) -> bool:
@@ -211,9 +207,5 @@ def _read_gpsd_tpv(
                         continue
                     return report
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            f"Failed to read a fix from gpsd at {host}:{port}: {exc}"
-        ) from exc
-    raise RuntimeError(
-        f"gpsd at {host}:{port} closed without sending a usable TPV fix"
-    )
+        raise RuntimeError(f"Failed to read a fix from gpsd at {host}:{port}: {exc}") from exc
+    raise RuntimeError(f"gpsd at {host}:{port} closed without sending a usable TPV fix")

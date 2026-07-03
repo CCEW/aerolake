@@ -168,8 +168,7 @@ class CollectionBuilder:
         # Complete = base present on both sides. Orphan = present on exactly one
         # side (symmetric difference), re-expanded to the file that *does* exist.
         complete = [
-            (base + _DATA_EXT, base + _META_EXT)
-            for base in sorted(data_bases & meta_bases)
+            (base + _DATA_EXT, base + _META_EXT) for base in sorted(data_bases & meta_bases)
         ]
         orphans = sorted(
             base + (_DATA_EXT if base in data_bases else _META_EXT)
@@ -216,7 +215,7 @@ class CollectionBuilder:
             # resolution rule). The startswith guard is belt-and-suspenders:
             # list_objects(prefix=dir_prefix) only returns keys under it.
             base = meta_key[: -len(_META_EXT)]
-            rel_name = base[len(dir_prefix):] if base.startswith(dir_prefix) else base
+            rel_name = base[len(dir_prefix) :] if base.startswith(dir_prefix) else base
 
             streams.append(
                 RecordingRef(
@@ -285,9 +284,7 @@ def _assemble_collection(
         collection["core:description"] = description
     if author is not None:
         collection["core:author"] = author
-    collection["core:streams"] = [
-        {"name": s.name, "hash": s.meta_hash} for s in streams
-    ]
+    collection["core:streams"] = [{"name": s.name, "hash": s.meta_hash} for s in streams]
 
     unknown = set(collection) - _VALID_COLLECTION_KEYS
     if unknown:

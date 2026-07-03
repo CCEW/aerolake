@@ -18,9 +18,7 @@ from aerolake.scripts.collection import main
 def _seed_recording(storage_client: StorageClient, data_key: str) -> None:
     """Seed a complete Recording (data + meta) with placeholder bodies."""
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
-    storage_client.upload_bytes(
-        meta_key, b'{"global": {}}', content_type="application/json"
-    )
+    storage_client.upload_bytes(meta_key, b'{"global": {}}', content_type="application/json")
     storage_client.upload_bytes(
         data_key, b"\x00\x00\x00\x00", content_type="application/octet-stream"
     )
@@ -32,6 +30,7 @@ def _json_out(capsys) -> dict:
 
 # --- Happy path ----------------------------------------------------------
 
+
 def test_creates_collection_and_writes_it(storage_client, capsys) -> None:
     _seed_recording(storage_client, "gnss_l1/2026-06-17/recA/capture.sigmf-data")
     _seed_recording(storage_client, "gnss_l1/2026-06-17/recB/capture.sigmf-data")
@@ -39,10 +38,14 @@ def test_creates_collection_and_writes_it(storage_client, capsys) -> None:
 
     exit_code = main(
         [
-            "--prefix", "gnss_l1/2026-06-17/",
-            "--name", "june",
-            "--description", "June campaign",
-            "--author", "schmitt",
+            "--prefix",
+            "gnss_l1/2026-06-17/",
+            "--name",
+            "june",
+            "--description",
+            "June campaign",
+            "--author",
+            "schmitt",
             "--json",
         ],
         builder=builder,
@@ -68,15 +71,11 @@ def test_creates_collection_and_writes_it(storage_client, capsys) -> None:
 
 
 def test_author_defaults_to_system_login(storage_client, capsys, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "aerolake.scripts.collection.getpass.getuser", lambda: "loginuser"
-    )
+    monkeypatch.setattr("aerolake.scripts.collection.getpass.getuser", lambda: "loginuser")
     _seed_recording(storage_client, "gnss_l1/recA/capture.sigmf-data")
     builder = CollectionBuilder(storage_client)
 
-    exit_code = main(
-        ["--prefix", "gnss_l1/", "--name", "x", "--json"], builder=builder
-    )
+    exit_code = main(["--prefix", "gnss_l1/", "--name", "x", "--json"], builder=builder)
 
     assert exit_code == 0
     key = _json_out(capsys)["collection_key"]
@@ -86,11 +85,10 @@ def test_author_defaults_to_system_login(storage_client, capsys, monkeypatch) ->
 
 # --- Orphans & empties ---------------------------------------------------
 
+
 def test_orphans_are_reported_but_excluded(storage_client, capsys) -> None:
     _seed_recording(storage_client, "gnss_l1/2026-06-17/recA/capture.sigmf-data")
-    storage_client.upload_bytes(
-        "gnss_l1/2026-06-17/orphan/capture.sigmf-data", b"x"
-    )
+    storage_client.upload_bytes("gnss_l1/2026-06-17/orphan/capture.sigmf-data", b"x")
     builder = CollectionBuilder(storage_client)
 
     exit_code = main(
@@ -107,9 +105,7 @@ def test_orphans_are_reported_but_excluded(storage_client, capsys) -> None:
 def test_no_recordings_writes_nothing(storage_client, capsys) -> None:
     builder = CollectionBuilder(storage_client)
 
-    exit_code = main(
-        ["--prefix", "empty/", "--name", "x", "--json"], builder=builder
-    )
+    exit_code = main(["--prefix", "empty/", "--name", "x", "--json"], builder=builder)
 
     assert exit_code == 0
     report = _json_out(capsys)
@@ -120,6 +116,7 @@ def test_no_recordings_writes_nothing(storage_client, capsys) -> None:
 
 
 # --- Dry run -------------------------------------------------------------
+
 
 def test_dry_run_plans_without_writing(storage_client, capsys) -> None:
     _seed_recording(storage_client, "gnss_l1/2026-06-17/recA/capture.sigmf-data")

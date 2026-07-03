@@ -61,8 +61,7 @@ def render_spectrum_png(
     # Top: power spectral density — "which frequencies are present, how strong".
     ax_psd.psd(x[:n_psd], NFFT=4096, Fs=sample_rate)
     ax_psd.set_title(
-        f"Spectre (PSD) — centre {center_freq / 1e6:.3f} MHz, "
-        f"{sample_rate / 1e6:.3f} MS/s"
+        f"Spectre (PSD) — centre {center_freq / 1e6:.3f} MHz, {sample_rate / 1e6:.3f} MS/s"
     )
     ax_psd.set_xlabel("Fréquence relative au centre (Hz)")
 

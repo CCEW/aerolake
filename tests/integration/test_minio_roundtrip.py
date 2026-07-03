@@ -27,9 +27,7 @@ _RUN = os.environ.get("AEROLAKE_RUN_INTEGRATION") == "1"
 MIB = 1024 * 1024
 
 
-@pytest.mark.skipif(
-    not _RUN, reason="set AEROLAKE_RUN_INTEGRATION=1 (needs a live MinIO)"
-)
+@pytest.mark.skipif(not _RUN, reason="set AEROLAKE_RUN_INTEGRATION=1 (needs a live MinIO)")
 def test_real_minio_roundtrip() -> None:
     settings = Settings()  # AEROLAKE_S3_* from the environment
     client = StorageClient(settings)
@@ -41,9 +39,7 @@ def test_real_minio_roundtrip() -> None:
     # --- upload_bytes + download + tags + range ---------------------------
     key = "_integration/blob.bin"
     data = (np.arange(100_000) % 256).astype(np.uint8).tobytes()  # ~100 KB
-    client.upload_bytes(
-        key, data, tags={"signal-type": "test", "quality": "raw"}
-    )
+    client.upload_bytes(key, data, tags={"signal-type": "test", "quality": "raw"})
     assert client.download_bytes(key) == data
     assert client.get_object_tags(key)["signal-type"] == "test"
     assert client.object_size(key) == len(data)

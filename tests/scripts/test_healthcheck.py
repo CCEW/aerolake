@@ -13,6 +13,7 @@ from aerolake.scripts.healthcheck import main
 
 # --- Success path --------------------------------------------------------
 
+
 def test_main_returns_zero_when_healthcheck_passes(
     monkeypatch,
     test_settings,
@@ -54,6 +55,7 @@ def test_main_verbose_prints_endpoint_and_bucket(
 
 # --- JSON output ---------------------------------------------------------
 
+
 def test_main_json_output_is_parseable(
     monkeypatch,
     test_settings,
@@ -71,10 +73,7 @@ def test_main_json_output_is_parseable(
     captured = capsys.readouterr()
     assert exit_code == 0
 
-    json_lines = [
-        line for line in captured.out.splitlines()
-        if line.strip().startswith("{")
-    ]
+    json_lines = [line for line in captured.out.splitlines() if line.strip().startswith("{")]
     assert json_lines, "no JSON output found"
     report = json.loads(json_lines[-1])
 
@@ -85,6 +84,7 @@ def test_main_json_output_is_parseable(
 
 
 # --- Failure paths -------------------------------------------------------
+
 
 def test_main_returns_one_when_bucket_missing(
     monkeypatch,
@@ -124,10 +124,7 @@ def test_main_json_on_failure_reports_error(
     captured = capsys.readouterr()
     assert exit_code == 1
 
-    json_lines = [
-        line for line in captured.out.splitlines()
-        if line.strip().startswith("{")
-    ]
+    json_lines = [line for line in captured.out.splitlines() if line.strip().startswith("{")]
     assert json_lines
     report = json.loads(json_lines[-1])
     assert report["status"] == "error"
@@ -136,11 +133,13 @@ def test_main_json_on_failure_reports_error(
 
 # --- Configuration error path --------------------------------------------
 
+
 def test_main_returns_two_on_settings_load_failure(
     monkeypatch,
     capsys,
 ):
     """If Settings cannot be loaded, main() returns 2 (config error)."""
+
     def explode():
         raise RuntimeError("simulated config failure")
 

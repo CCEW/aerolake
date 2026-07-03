@@ -74,12 +74,20 @@ def test_generate_tone_higher_amplitude_increases_power() -> None:
     the measured power, never lower it.
     """
     low = generate_tone(
-        duration_s=0.01, sample_rate=1_000_000, center_freq=1e9,
-        tone_amplitude=0.1, snr_db=40.0, seed=1,
+        duration_s=0.01,
+        sample_rate=1_000_000,
+        center_freq=1e9,
+        tone_amplitude=0.1,
+        snr_db=40.0,
+        seed=1,
     )
     high = generate_tone(
-        duration_s=0.01, sample_rate=1_000_000, center_freq=1e9,
-        tone_amplitude=0.5, snr_db=40.0, seed=1,
+        duration_s=0.01,
+        sample_rate=1_000_000,
+        center_freq=1e9,
+        tone_amplitude=0.5,
+        snr_db=40.0,
+        seed=1,
     )
     rms_low = np.sqrt(np.mean(np.abs(low.samples) ** 2))
     rms_high = np.sqrt(np.mean(np.abs(high.samples) ** 2))
@@ -93,7 +101,10 @@ def test_generate_tone_description_includes_dbfs() -> None:
     metadata can see at what amplitude the capture was generated.
     """
     signal = generate_tone(
-        duration_s=0.01, sample_rate=1_000_000, center_freq=1e9,
-        tone_amplitude=0.1, seed=1,
+        duration_s=0.01,
+        sample_rate=1_000_000,
+        center_freq=1e9,
+        tone_amplitude=0.1,
+        seed=1,
     )
     assert "dBFS" in signal.description

@@ -78,7 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Validate AeroLake storage layer connectivity.",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Print connection details even on success.",
     )

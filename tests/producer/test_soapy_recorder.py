@@ -124,6 +124,7 @@ def _opener_for(device: FakeDevice, *, serial: str = "FAKE123"):
 
 # --- capture() one-shot --------------------------------------------------
 
+
 def test_capture_stores_effective_values_and_provenance() -> None:
     dev = FakeDevice(eff_sample_rate=2_048_000.0, eff_gain=40.2, eff_antenna="LNAW")
     rec = SdrRecorder(driver="bladerf", device_opener=_opener_for(dev, serial="S1"))
@@ -187,6 +188,7 @@ def test_falls_back_to_fixed_gain_without_agc() -> None:
 
 # --- teardown & lifecycle ------------------------------------------------
 
+
 def test_capture_tears_down_stream_then_releases_device() -> None:
     dev = FakeDevice()
     rec = SdrRecorder(device_opener=_opener_for(dev))
@@ -229,6 +231,7 @@ def test_configure_rejects_nonpositive_rate() -> None:
 
 
 # --- backward-compatible function shim -----------------------------------
+
 
 def test_capture_from_sdr_delegates_to_recorder() -> None:
     dev = FakeDevice(eff_sample_rate=1000.0, eff_gain=33.0)

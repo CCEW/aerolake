@@ -102,13 +102,10 @@ def _emit_json(plan: CollectionPlan, *, written: bool) -> None:
     )
 
 
-def _print_summary(
-    console: Console, plan: CollectionPlan, *, written: bool, dry_run: bool
-) -> None:
+def _print_summary(console: Console, plan: CollectionPlan, *, written: bool, dry_run: bool) -> None:
     """Render a human-readable summary of what was grouped (or would be)."""
     console.print(
-        f"[bold]{len(plan.streams)}[/] Recording(s) grouped under "
-        f"prefix [cyan]{plan.prefix}[/]"
+        f"[bold]{len(plan.streams)}[/] Recording(s) grouped under prefix [cyan]{plan.prefix}[/]"
     )
     for stream in plan.streams:
         console.print(f"  • {stream.name}")
@@ -118,13 +115,9 @@ def _print_summary(
         for key in plan.orphans:
             console.print(f"  [yellow]- {key}[/]")
     if written:
-        console.print(
-            f"[green]✓ Collection written to[/] [cyan]{plan.collection_key}[/]"
-        )
+        console.print(f"[green]✓ Collection written to[/] [cyan]{plan.collection_key}[/]")
     elif dry_run:
-        console.print(
-            f"[dim]Dry run — would write[/] [cyan]{plan.collection_key}[/]"
-        )
+        console.print(f"[dim]Dry run — would write[/] [cyan]{plan.collection_key}[/]")
 
 
 def main(argv: list[str] | None = None, *, builder: CollectionBuilder | None = None) -> int:
@@ -175,14 +168,9 @@ def main(argv: list[str] | None = None, *, builder: CollectionBuilder | None = N
             _emit_json(plan, written=False)
         else:
             scope = plan.prefix or "(whole bucket)"
-            console.print(
-                f"[yellow]No complete Recordings under {scope} — "
-                f"nothing to group.[/]"
-            )
+            console.print(f"[yellow]No complete Recordings under {scope} — nothing to group.[/]")
             if plan.orphans:
-                console.print(
-                    f"[yellow]{len(plan.orphans)} orphan(s) found and skipped.[/]"
-                )
+                console.print(f"[yellow]{len(plan.orphans)} orphan(s) found and skipped.[/]")
         return 0
 
     # Write, unless this is a dry run. The upload failing is exit 1.

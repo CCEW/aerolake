@@ -148,16 +148,12 @@ class CapturePlayer:
         # duration_s), use the partial Range read so we only fetch that slice;
         # otherwise read the whole capture.
         if start_s or duration_s is not None:
-            content = self._reader.read_segment(
-                data_key, start_s=start_s, duration_s=duration_s
-            )
+            content = self._reader.read_segment(data_key, start_s=start_s, duration_s=duration_s)
         else:
             content = self._reader.read(data_key)
         samples = content.samples
 
-        sample_rate = float(
-            content.sigmf_meta.get("global", {}).get("core:sample_rate", 0.0)
-        )
+        sample_rate = float(content.sigmf_meta.get("global", {}).get("core:sample_rate", 0.0))
         if sample_rate <= 0:
             raise ValueError(
                 "Cannot pace playback: missing/invalid core:sample_rate in "

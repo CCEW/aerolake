@@ -19,15 +19,19 @@ from aerolake.scripts.play import main
 
 def _seed(storage_client: StorageClient, data_key: str) -> None:
     meta = {
-        "global": {"core:datatype": "cf32_le", "core:sample_rate": 2_000_000.0,
-                   "core:version": "1.2.6"},
+        "global": {
+            "core:datatype": "cf32_le",
+            "core:sample_rate": 2_000_000.0,
+            "core:version": "1.2.6",
+        },
         "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000.0}],
         "annotations": [],
     }
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
     storage_client.upload_bytes(meta_key, json.dumps(meta).encode("utf-8"))
     storage_client.upload_bytes(
-        data_key, np.zeros(8192, dtype=np.complex64).tobytes(),
+        data_key,
+        np.zeros(8192, dtype=np.complex64).tobytes(),
         tags={"signal-type": "gnss_l1", "quality": "raw"},
     )
 
@@ -53,9 +57,7 @@ def test_play_by_prefix_picks_most_recent(storage_client, capsys) -> None:
     _seed(storage_client, "gnss_l1/2026-05-01/aa/capture.sigmf-data")
     _seed(storage_client, "gnss_l1/2026-05-29/bb/capture.sigmf-data")
 
-    code = main(
-        ["--prefix", "gnss_l1/", "--no-realtime"], player=_player(storage_client)
-    )
+    code = main(["--prefix", "gnss_l1/", "--no-realtime"], player=_player(storage_client))
 
     assert code == 0
     # The most recent (latest-sorted) key should be the one played.

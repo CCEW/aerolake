@@ -408,9 +408,7 @@ class SdrRecorder:
 
             # readStream fills `chunk[:want]` and returns a status object whose
             # .ret is the number of samples read, or a negative SoapySDR code.
-            status = dev.readStream(
-                self._stream, [chunk[:want]], want, timeoutUs=_READ_TIMEOUT_US
-            )
+            status = dev.readStream(self._stream, [chunk[:want]], want, timeoutUs=_READ_TIMEOUT_US)
             nread = status.ret
 
             if nread == SOAPY_SDR_OVERFLOW:
@@ -419,8 +417,7 @@ class SdrRecorder:
                 continue
             if nread < 0:
                 raise RuntimeError(
-                    f"readStream failed after {filled} samples "
-                    f"(SoapySDR error code {nread})"
+                    f"readStream failed after {filled} samples (SoapySDR error code {nread})"
                 )
             if nread == 0:
                 # No samples this round (timeout). Retry; the loop bound
@@ -461,9 +458,7 @@ class SdrRecorder:
 
     # --- One-shot convenience + context manager --------------------------
 
-    def capture(
-        self, *, duration_s: float, sample_rate: float, center_freq: float
-    ) -> SdrCapture:
+    def capture(self, *, duration_s: float, sample_rate: float, center_freq: float) -> SdrCapture:
         """Run a full capture cycle and return an :class:`SdrCapture`.
 
         Open → configure → start → read → stop → close, with teardown

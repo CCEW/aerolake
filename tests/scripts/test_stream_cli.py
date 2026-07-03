@@ -20,15 +20,19 @@ from aerolake.scripts.stream import main
 
 def _seed(storage_client: StorageClient, data_key: str, *, signal_type: str = "gnss_l1") -> None:
     meta = {
-        "global": {"core:datatype": "cf32_le", "core:sample_rate": 2_000_000.0,
-                   "core:version": "1.2.6"},
+        "global": {
+            "core:datatype": "cf32_le",
+            "core:sample_rate": 2_000_000.0,
+            "core:version": "1.2.6",
+        },
         "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000.0}],
         "annotations": [],
     }
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
     storage_client.upload_bytes(meta_key, json.dumps(meta).encode("utf-8"))
     storage_client.upload_bytes(
-        data_key, np.zeros(8192, dtype=np.complex64).tobytes(),
+        data_key,
+        np.zeros(8192, dtype=np.complex64).tobytes(),
         tags={"signal-type": signal_type, "quality": "raw"},
     )
 

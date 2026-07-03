@@ -36,13 +36,15 @@ def _seed_arange(
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
     storage_client.upload_bytes(meta_key, json.dumps(meta).encode("utf-8"))
     storage_client.upload_bytes(
-        data_key, samples.tobytes(),
+        data_key,
+        samples.tobytes(),
         tags={"signal-type": "gnss_l1", "quality": "raw"},
     )
     return samples
 
 
 # --- read_segment --------------------------------------------------------
+
 
 def test_read_segment_returns_requested_window(storage_client) -> None:
     samples = _seed_arange(storage_client, "c/capture.sigmf-data", n=1000, sample_rate=1000.0)
@@ -79,6 +81,7 @@ def test_read_segment_start_past_end_is_empty(storage_client) -> None:
 
 
 # --- player windowing ----------------------------------------------------
+
 
 def test_player_partial_window_emits_only_the_window(storage_client) -> None:
     _seed_arange(storage_client, "c/capture.sigmf-data", n=1000, sample_rate=1000.0)

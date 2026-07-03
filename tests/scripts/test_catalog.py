@@ -29,11 +29,10 @@ def _seed(
     The bodies are placeholders: list/inspect only touch tags + metadata.
     """
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
+    storage_client.upload_bytes(meta_key, b"{}", content_type="application/json")
     storage_client.upload_bytes(
-        meta_key, b"{}", content_type="application/json"
-    )
-    storage_client.upload_bytes(
-        data_key, b"x",
+        data_key,
+        b"x",
         metadata={
             "sample-rate": str(sample_rate),
             "center-freq": str(center_freq),
@@ -48,6 +47,7 @@ def _json_out(capsys) -> dict:
 
 
 # --- Listing -------------------------------------------------------------
+
 
 def test_list_all_returns_every_capture(storage_client, capsys) -> None:
     _seed(storage_client, "gnss_l1/A/capture.sigmf-data")
@@ -78,6 +78,7 @@ def test_prefix_scopes_the_listing(storage_client, capsys) -> None:
 
 # --- Filtering -----------------------------------------------------------
 
+
 def test_filter_by_hardware(storage_client, capsys) -> None:
     _seed(storage_client, "gnss_l1/ok/capture.sigmf-data", hardware="bladerf")
     _seed(storage_client, "gnss_l1/other/capture.sigmf-data", hardware="synthetic")
@@ -93,11 +94,9 @@ def test_filter_by_hardware(storage_client, capsys) -> None:
 
 def test_filters_combine_with_and(storage_client, capsys) -> None:
     # Matches both filters.
-    _seed(storage_client, "match/capture.sigmf-data",
-          signal_type="iridium", hardware="bladerf")
+    _seed(storage_client, "match/capture.sigmf-data", signal_type="iridium", hardware="bladerf")
     # Right signal-type, wrong hardware.
-    _seed(storage_client, "nomatch/capture.sigmf-data",
-          signal_type="iridium", hardware="synthetic")
+    _seed(storage_client, "nomatch/capture.sigmf-data", signal_type="iridium", hardware="synthetic")
     reader = CaptureReader(storage_client)
 
     exit_code = main(
@@ -125,6 +124,7 @@ def test_generic_tag_filter(storage_client, capsys) -> None:
 
 
 # --- Edge cases ----------------------------------------------------------
+
 
 def test_no_matches_returns_zero(storage_client, capsys) -> None:
     _seed(storage_client, "gnss_l1/A/capture.sigmf-data")

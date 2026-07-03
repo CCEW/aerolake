@@ -43,10 +43,10 @@ logger = structlog.get_logger(__name__)
 # Supported source datatypes -> (numpy dtype of the raw file, bytes per complex
 # sample). Each raw complex sample is two interleaved scalars (I, Q).
 _SOURCE_DTYPES: dict[str, tuple[np.dtype, int]] = {
-    "cf32": (np.dtype("<c8"), 8),   # complex float32 LE — already our target
-    "cu8": (np.dtype("u1"), 2),     # unsigned 8-bit (RTL-SDR), I,Q interleaved
-    "cs16": (np.dtype("<i2"), 4),   # signed 16-bit LE, I,Q interleaved
-    "cs32": (np.dtype("<i4"), 8),   # signed 32-bit LE (e.g. RFSoC), I,Q interleaved
+    "cf32": (np.dtype("<c8"), 8),  # complex float32 LE — already our target
+    "cu8": (np.dtype("u1"), 2),  # unsigned 8-bit (RTL-SDR), I,Q interleaved
+    "cs16": (np.dtype("<i2"), 4),  # signed 16-bit LE, I,Q interleaved
+    "cs32": (np.dtype("<i4"), 8),  # signed 32-bit LE (e.g. RFSoC), I,Q interleaved
 }
 
 # cf32 datatype string we store everywhere (SigMF spec).
@@ -64,9 +64,7 @@ class IngestResult:
     bytes_uploaded: int
 
 
-def _iter_cf32_chunks(
-    file_path: str, datatype: str, chunk_samples: int
-) -> Iterator[bytes]:
+def _iter_cf32_chunks(file_path: str, datatype: str, chunk_samples: int) -> Iterator[bytes]:
     """Yield the file as **cf32 byte chunks**, converting from the source type.
 
     Reads ``chunk_samples`` complex samples at a time so memory stays bounded.
@@ -91,16 +89,14 @@ def _iter_cf32_chunks(
                 # 0..255, midpoint 127.5 -> map to roughly [-1, 1].
                 floats = (scalars.astype(np.float32) - 127.5) / 127.5
             elif datatype == "cs16":
-                floats = scalars.astype(np.float32) / 32768.0       # 2**15
+                floats = scalars.astype(np.float32) / 32768.0  # 2**15
             else:  # cs32
                 floats = scalars.astype(np.float32) / 2147483648.0  # 2**31
             iq = (floats[0::2] + 1j * floats[1::2]).astype(np.complex64)
             yield iq.tobytes()
 
 
-def _iter_cf32_files(
-    file_paths: list[str], datatype: str, chunk_samples: int
-) -> Iterator[bytes]:
+def _iter_cf32_files(file_paths: list[str], datatype: str, chunk_samples: int) -> Iterator[bytes]:
     """Stream several files in order as one continuous cf32 byte stream.
 
     Used to ingest a capture split into many packet files (e.g. the RFSoC's
@@ -159,8 +155,7 @@ def ingest_files(
     """
     if datatype not in _SOURCE_DTYPES:
         raise ValueError(
-            f"Unsupported source datatype {datatype!r}. "
-            f"Supported: {sorted(_SOURCE_DTYPES)}"
+            f"Unsupported source datatype {datatype!r}. Supported: {sorted(_SOURCE_DTYPES)}"
         )
     if not file_paths:
         raise ValueError("ingest_files: file_paths is empty")

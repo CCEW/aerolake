@@ -97,9 +97,7 @@ def _parse_filters(args: argparse.Namespace) -> dict[str, str]:
     # Then generic key=value pairs (these win if they repeat a named one).
     for raw in args.tag:
         if "=" not in raw:
-            raise ValueError(
-                f"--tag must be KEY=VALUE, got {raw!r} (missing '=')"
-            )
+            raise ValueError(f"--tag must be KEY=VALUE, got {raw!r} (missing '=')")
         key, value = raw.split("=", 1)
         if not key:
             raise ValueError(f"--tag has an empty key: {raw!r}")
@@ -120,11 +118,7 @@ def _list_matching(
     for data_key in reader.list_captures(prefix=prefix):
         info = reader.inspect(data_key)
         if all(info.tags.get(k) == v for k, v in filters.items()):
-            rows.append(
-                CaptureRow(
-                    data_key=data_key, tags=info.tags, metadata=info.metadata
-                )
-            )
+            rows.append(CaptureRow(data_key=data_key, tags=info.tags, metadata=info.metadata))
     return rows
 
 
@@ -206,15 +200,19 @@ def main(argv: list[str] | None = None, *, reader: CaptureReader | None = None) 
 
     # Render.
     if args.json:
-        print(json.dumps({
-            "prefix": args.prefix,
-            "filters": filters,
-            "total": len(rows),
-            "captures": [
-                {"data_key": r.data_key, "tags": r.tags, "metadata": r.metadata}
-                for r in rows
-            ],
-        }))
+        print(
+            json.dumps(
+                {
+                    "prefix": args.prefix,
+                    "filters": filters,
+                    "total": len(rows),
+                    "captures": [
+                        {"data_key": r.data_key, "tags": r.tags, "metadata": r.metadata}
+                        for r in rows
+                    ],
+                }
+            )
+        )
     elif not rows:
         scope = f" under prefix {args.prefix!r}" if args.prefix else ""
         suffix = " matching the filters" if filters else ""

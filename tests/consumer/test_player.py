@@ -19,6 +19,7 @@ from aerolake.producer.synthetic import generate_tone
 
 # --- iter_frames (pure) --------------------------------------------------
 
+
 def test_iter_frames_splits_into_full_and_remainder() -> None:
     samples = np.arange(10, dtype=np.complex64)
     frames = list(iter_frames(samples, 4))
@@ -37,6 +38,7 @@ def test_iter_frames_rejects_nonpositive_size() -> None:
 
 
 # --- CapturePlayer -------------------------------------------------------
+
 
 def _seed_capture(
     storage_client: StorageClient,
@@ -63,11 +65,13 @@ def _seed_capture(
     }
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
     storage_client.upload_bytes(
-        meta_key, json.dumps(sigmf_meta).encode("utf-8"),
+        meta_key,
+        json.dumps(sigmf_meta).encode("utf-8"),
         content_type="application/json",
     )
     storage_client.upload_bytes(
-        data_key, signal.samples.tobytes(),
+        data_key,
+        signal.samples.tobytes(),
         content_type="application/octet-stream",
         tags={"signal-type": "gnss_l1", "quality": "raw"},
     )
@@ -77,18 +81,14 @@ def _seed_capture(
 def test_play_paces_each_frame_at_recorded_rate(storage_client) -> None:
     """Real-time playback should sleep frame_size/sample_rate per full frame."""
     sample_rate = 2_000_000.0
-    n = _seed_capture(
-        storage_client, "gnss_l1/A/capture.sigmf-data", sample_rate=sample_rate
-    )
+    n = _seed_capture(storage_client, "gnss_l1/A/capture.sigmf-data", sample_rate=sample_rate)
 
     # Fake clock: record every requested sleep duration instead of waiting.
     slept: list[float] = []
     player = CapturePlayer(CaptureReader(storage_client), sleep=slept.append)
 
     frame_size = 4096
-    stats = player.play(
-        "gnss_l1/A/capture.sigmf-data", frame_size=frame_size, realtime=True
-    )
+    stats = player.play("gnss_l1/A/capture.sigmf-data", frame_size=frame_size, realtime=True)
 
     # One sleep per emitted frame.
     expected_frames = (n + frame_size - 1) // frame_size
@@ -107,9 +107,7 @@ def test_play_no_realtime_does_not_sleep(storage_client) -> None:
     slept: list[float] = []
     player = CapturePlayer(CaptureReader(storage_client), sleep=slept.append)
 
-    stats = player.play(
-        "gnss_l1/B/capture.sigmf-data", frame_size=1024, realtime=False
-    )
+    stats = player.play("gnss_l1/B/capture.sigmf-data", frame_size=1024, realtime=False)
 
     assert slept == []
     assert stats.frames > 0
@@ -135,13 +133,13 @@ def test_play_raises_without_sample_rate(storage_client) -> None:
     """A capture whose metadata lacks core:sample_rate can't be paced."""
     # Seed a capture with a zero sample rate in its metadata.
     meta = {
-        "global": {"core:datatype": "cf32_le", "core:sample_rate": 0,
-                   "core:version": "1.2.6"},
+        "global": {"core:datatype": "cf32_le", "core:sample_rate": 0, "core:version": "1.2.6"},
         "captures": [{"core:sample_start": 0}],
         "annotations": [],
     }
     storage_client.upload_bytes(
-        "bad/capture.sigmf-meta", json.dumps(meta).encode("utf-8"),
+        "bad/capture.sigmf-meta",
+        json.dumps(meta).encode("utf-8"),
     )
     storage_client.upload_bytes(
         "bad/capture.sigmf-data",

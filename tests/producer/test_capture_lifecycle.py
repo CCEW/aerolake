@@ -81,9 +81,7 @@ def test_save_locally_writes_both_files_mirroring_keys(tmp_path) -> None:
     assert str(out_dir).endswith(str(Path(prepared.data_key).parent))
 
 
-def test_save_locally_does_not_touch_minio(
-    storage_client: StorageClient, tmp_path
-) -> None:
+def test_save_locally_does_not_touch_minio(storage_client: StorageClient, tmp_path) -> None:
     prepared = _prepare()
     save_capture_locally(prepared, root=tmp_path)
     assert list(storage_client.list_objects("")) == []
