@@ -205,6 +205,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-016 — SigMF-native geolocation from gpsd (avoid the "GPSD trap": live fix → validated `core:geolocation`, None when no fix; injectable gpsd reader)
 - ADR-018 — **remove the quality/validation layer** (user opts in to saving each acquisition; supersedes ADR-004/005)
 - ADR-019 — **record/playback division of labour**: GNU Radio owns the RF edges (heavy record + RF re-emission), AeroLake owns the lakehouse (store/catalog/serve + software & visual playback); the `.sigmf-data` file is the contract (refines ADR-007/012)
+- ADR-020 — **MinIO community EOL**: stay on pinned MinIO short-term; **SeaweedFS** is the validated fallback (the integration suite passed against it unchanged); any store must support tagging + Range + multipart + x-amz-meta (Garage excluded: no tagging)
 
 ## Testing notes
 
