@@ -112,6 +112,15 @@ autour.
 
 ---
 
+## 5b. L'interface web (optionnelle, mais c'est elle que les collègues voient)
+- `gui/app.py` — l'appli **Streamlit** (`uv sync --extra gui` puis `uv run aerolake-gui`).
+  **Aucune logique de capture à elle** : c'est une *façade cliquable* sur les mêmes
+  fonctions que la CLI (`load_capture_config` → `prepare_capture` → `push_capture`,
+  et `CaptureReader` pour l'onglet Playback). Si tu comprends le happy path du §2,
+  tu comprends le GUI. Thème dans `.streamlit/config.toml`.
+
+---
+
 ## 6. Ce que tu peux IGNORER pour faire tourner le lakehouse (périphérie)
 Ces fichiers sont du **bonus** (utiles un jour, pas requis pour la mission
 « record → SigMF → MinIO »). Si tu reprends le projet, tu peux les laisser de côté

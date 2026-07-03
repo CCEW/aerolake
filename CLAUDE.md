@@ -8,8 +8,11 @@ AeroLake is an RF data-lakehouse pipeline (LASSENA project). It captures radio-f
 signals, encodes them as [SigMF](https://github.com/sigmf/SigMF) (a `.sigmf-data` binary blob +
 a `.sigmf-meta` JSON sidecar), stores them in a MinIO bucket, and reads/validates them back.
 Stored captures can be replayed at their recorded cadence and streamed over a ZeroMQ Pub/Sub bus
-(ADR-007/008). Real SDR capture and GNU Radio Record/Playback are on the roadmap but **not yet
-built** — today the producer generates **synthetic** signals and ingestion is batch.
+(ADR-007/008). **Real SDR capture works** (SoapySDR: RTL-SDR validated on a signal-generator
+bench; BladeRF supported), alongside synthetic generation for hardware-free runs. A Streamlit
+**web GUI** (optional `[gui]` extra) drives capture + playback from a browser. GNU Radio owns the
+heavy RF edges — high-rate record and future RF re-emission — with the `.sigmf-data` file as the
+contract between the two worlds (ADR-019).
 
 ## Commands
 
@@ -24,13 +27,17 @@ cd docker && docker compose up -d   # MinIO API :9000, console :9001, auto-creat
 
 # Entry points (defined in pyproject [project.scripts])
 uv run aerolake-healthcheck          # verify .env + MinIO reachable + bucket accessible
-uv run aerolake-producer --preset gnss-l1 --duration 1.0   # generate+upload a synthetic capture
+uv run aerolake-capture --config examples/capture.example.toml   # file-driven capture (TOML recommended, JSON ok; synthetic or real SDR per the config's source block)
 uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6  # ingest a REAL IQ file
 uv run aerolake-list --signal-type iridium   # list/filter captures by tag (no byte download)
 uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campaign" --description "..."  # group complete Recordings under a prefix into a .sigmf-collection
 uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # partial read: t=200s, 10s (HTTP Range)
 uv run aerolake-stream --prefix gnss_l1/      # publish a capture's frames over ZeroMQ Pub/Sub
 uv run aerolake-subscribe --address tcp://localhost:5555   # subscribe to a ZeroMQ stream (the receiving half, any device)
+
+# Web GUI (optional extra — NOT installed by plain `uv sync`)
+uv sync --extra gui                  # adds streamlit + streamlit-folium
+uv run aerolake-gui                  # serve the GUI on 0.0.0.0:8501 (colleagues open it in a browser)
 
 # Quality / linting / tests
 uv run ruff check .              # lint  (ruff config in pyproject; line-length 100, E501 ignored)
@@ -91,6 +98,17 @@ The pipeline is **Producer → MinIO → Consumer**. Three packages under `src/a
   rate (injectable clock for tests) — the software half of "playback". `stream.py`
   (`FramePublisher`/`FrameSubscriber`, ADR-008) publishes those frames over a ZeroMQ PUB/SUB bus
   (pure `encode_frame`/`decode_frame` wire format; injectable socket for tests).
+- **`gui/`** — the **web front-end** (Streamlit, optional extra: `uv sync --extra gui`; entry point
+  `aerolake-gui`). `app.py` is a thin facade over the SAME engine as the CLI — no capture logic of
+  its own. Two tabs: **Capture** (upload a TOML/JSON config → `prepare_capture` → push/keep/discard,
+  with an optional folium map to click the antenna spot, overriding the config's geolocation) and
+  **Playback** (list MinIO captures via `CaptureReader`, scrub any time window's spectrum via HTTP
+  Range/`read_segment`, show the ready `aerolake-stream` ZeroMQ command, download SigMF for
+  GNU Radio). Theme lives in `.streamlit/config.toml`; the animated ColorBends background is a
+  three.js shader in an `st.iframe` CSS-pinned full-screen (needs the browser online for the CDN).
+  Distinct from the *archived* ADR-006 visualization GUI — this one is part of the mandate's
+  usability layer (any user captures without a terminal). Smoke-tested via Streamlit `AppTest`
+  (`tests/gui/`, auto-skipped when the extra isn't installed).
 `scripts/` holds the CLI entry points (`healthcheck.py`, `capture.py`, `ingest.py`,
 `catalog.py`, `collection.py`, `play.py`, `stream.py`, `subscribe.py`), all using `rich` for output and documented exit codes (0 ok / 1 storage failure /
 2 config-or-unexpected). All CLIs call `aerolake.common.logging.configure_logging` first so
@@ -143,8 +161,11 @@ the **RX pipeline**: capture → MinIO (SigMF + metadata/tags) → HTTP Range ex
 Pub/Sub. The **quality/validation layer was later removed entirely** (ADR-018): the user opts in
 to saving each acquisition, so an automated quality verdict added no value. Out-of-scope
 explorations (GUI/ADR-006, `.h5` analysis/ADR-011, TX/ADR-012) were **archived** to the
-`archive/explorations-v1` branch. Real SDR capture (SoapySDR) is still future work — today the
-producer generates synthetic signals. Trust the ADRs and the code for current status.
+`archive/explorations-v1` branch. (Note: the archived ADR-006 app was a *visualization* GUI; the
+capture/playback GUI under `src/aerolake/gui/` is a NEW, in-mandate component from 2026-06.)
+Real SDR capture works: RTL-SDR was validated end-to-end on a signal-generator bench
+(generator → RTL-SDR → SigMF → MinIO); synthetic capture remains available for hardware-free
+runs. Trust the ADRs and the code for current status.
 
 ## Project context & history
 

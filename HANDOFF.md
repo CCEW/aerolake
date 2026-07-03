@@ -68,13 +68,26 @@ Aujourd'hui MinIO tourne en Docker **en local**. Pour qu'il survive :
    Ensuite `acquire.sh` fait le `attach` automatiquement à chaque lancement.
 
 ## 5. Faire une acquisition
+
+**Option A — l'interface web (recommandée pour les collègues, zéro terminal) :**
 ```bash
-./acquire.sh examples/<config>.json      # ex. examples/test-complet.json
+uv sync --extra gui && uv run aerolake-gui    # à lancer UNE fois sur le poste d'acquisition
+```
+Chacun ouvre ensuite `http://<poste>:8501` dans son navigateur : déposer une
+config TOML/JSON → (option) cliquer la position de l'antenne sur la carte →
+Démarrer → revoir le spectre → Pousser dans MinIO / Garder / Jeter. Un onglet
+**Playback** permet de parcourir le lakehouse, visualiser le spectre de
+n'importe quelle fenêtre et exporter le SigMF pour GNU Radio.
+
+**Option B — la ligne de commande :**
+```bash
+./acquire.sh examples/<config>.toml      # ex. examples/test-complet.toml
 ```
 `acquire.sh` détecte **tout seul** si MinIO est local ou sur le NAS (via
 l'endpoint du `.env`) et enchaîne : (Docker si local) → USB/SDR → SoapySDR →
 healthcheck → capture → upload (data + meta + aperçu PNG). Répondre `y` pour
-pousser. Les configs JSON sont dans `examples/` (voir `examples/README.md`).
+pousser. Les configs (**TOML recommandé** — commentées — ou JSON) sont dans
+`examples/` (voir `examples/README.md` ; `capture.full.toml` = le modèle complet).
 
 ## 6. Parcourir / visualiser (zéro install)
 - **Console MinIO** : `http://<nas>:9001` → bucket `aerolake-captures` → naviguer
@@ -88,9 +101,12 @@ uv run ruff check .   &&   uv run mypy src   &&   uv run pytest
 ```
 
 ## 8. Évolutions prévues (non faites)
-- **GUI web « Start Acquisition »** (Streamlit) : pour que les non-techniques
-  lancent une capture depuis un navigateur, sans rien installer. À lancer sur le
-  poste d'acquisition (`--server.address 0.0.0.0`). Idée détaillée mais non codée.
+- **GUI : auto-démarrage au boot** du poste d'acquisition (service/raccourci),
+  pour le « zéro-terminal » total — le GUI lui-même est **fait** (voir §5).
+- **GUI : formulaire de config** (fréquence/durée → génère le TOML) pour ne plus
+  manipuler de fichier du tout ; la carte cliquable en était la première brique.
+- **Ré-émission RF** : GNU Radio + BladeRF TX, câblé + atténué — avec Camelia
+  (division du travail : ADR-019).
 - **Couche SQL / Apache Iceberg** : le « vrai » lakehouse requêtable — évolution
   future (cf. ADR-013, `docs/pitch-architecture.md`).
 
