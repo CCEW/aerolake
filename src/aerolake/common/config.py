@@ -59,6 +59,21 @@ class Settings(BaseSettings):
         default="us-east-1",
         description="S3 region. MinIO ignores this but boto3 requires it.",
     )
+    # TLS verification against the endpoint. Lab servers (e.g. FAST) often use
+    # an INTERNAL certificate authority that public trust stores don't know:
+    # point `s3_ca_bundle` at the CA's .pem to verify properly. Only if the CA
+    # file is not (yet) available, `s3_verify_ssl=false` disables verification
+    # — a deliberate, temporary trade-off for internal networks.
+    s3_verify_ssl: bool = Field(
+        default=True,
+        description="Verify the endpoint's TLS certificate (disable only as a "
+        "temporary measure on trusted internal networks).",
+    )
+    s3_ca_bundle: str = Field(
+        default="",
+        description="Path to a CA bundle (.pem) that signs the endpoint's "
+        "certificate — the clean fix for internal CAs. Empty = system store.",
+    )
 
 
 @lru_cache(maxsize=1)

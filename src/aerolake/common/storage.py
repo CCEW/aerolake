@@ -89,6 +89,14 @@ class StorageClient:
         }
         if self._settings.s3_endpoint:
             kwargs["endpoint_url"] = self._settings.s3_endpoint
+        # TLS verification (see Settings): a CA bundle path takes precedence
+        # (the clean fix for endpoints signed by an internal CA, e.g. FAST's
+        # "ETS Montreal Root CA"); otherwise the verify flag applies. boto3's
+        # `verify` accepts True (system store), False, or a CA bundle path.
+        if self._settings.s3_ca_bundle:
+            kwargs["verify"] = self._settings.s3_ca_bundle
+        elif not self._settings.s3_verify_ssl:
+            kwargs["verify"] = False
         return boto3.client("s3", **kwargs)
 
     @property
