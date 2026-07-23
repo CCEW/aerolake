@@ -71,7 +71,7 @@ non-développeurs.
 |---|---|
 | **Abdu** (Abdessamad Amrhar) | Chef de projet, admin FAST/MinIO — c'est lui qui donne les accès |
 | **Malek** | Tuteur |
-| **Camelia** | Référente GNU Radio / ré-émission RF (la branche "RF pur", ADR-019) |
+| **Camila** | Référente GNU Radio / ré-émission RF (la branche "RF pur", ADR-019) |
 | **Wissem / Ahmad** | Propriétaires des récepteurs (RFSoC…) |
 | **Théo Schmitt** | Auteur d'AeroLake (parti — d'où ce document) |
 
@@ -254,7 +254,7 @@ JSON, octets complex64).
 - **GNU Radio** est l'atelier de traitement du signal par excellence (flowgraphs
   graphiques). **Division du travail actée (ADR-019)** : GNU Radio possède les
   « bords RF » exigeants — l'enregistrement très haut débit et la **ré-émission
-  RF** (avec Camelia) — tandis qu'AeroLake possède le **lakehouse** (ranger,
+  RF** (avec Camila) — tandis qu'AeroLake possède le **lakehouse** (ranger,
   cataloguer, servir, rejouer en logiciel).
 - **Le contrat entre les deux mondes est le fichier `.sigmf-data` lui-même** : du
   `cf32_le` brut, que les blocs File Source/File Sink de GNU Radio lisent et
@@ -435,7 +435,7 @@ confirmation avant de pousser. Équivalent plus bas niveau :
 3. **Ré-émettre en RF** (GNU Radio + SDR émetteur, ex. BladeRF) : bouton
    **« Exporter pour GNU Radio »** de l'onglet Playback → charger le
    `.sigmf-data` dans `gnuradio/playback.grc`. *(Branche RF — référente :
-   Camelia ; ADR-019.)*
+   Camila ; ADR-019.)*
 
 ## 4.5 Ingérer un enregistrement existant
 
@@ -910,7 +910,7 @@ directe pour AeroLake : **Garage ne supporte PAS le tagging d'objets S3**
 - **Playback GNU Radio validé sur banc** : dérouler `gnuradio/playback.grc` sur
   une vraie capture (validation headless : `grcc -o /tmp gnuradio/playback.grc`),
   écrire le petit runbook.
-- **Ré-émission RF** avec Camelia : BladeRF TX, câblé + atténué (ADR-019 ;
+- **Ré-émission RF** avec Camila : BladeRF TX, câblé + atténué (ADR-019 ;
   jamais en rayonné sans autorisation).
 - **GUI : formulaire de config** (fréquence/durée → génère le TOML) pour ne plus
   manipuler de fichier du tout — la carte cliquable en était la première brique.
@@ -981,7 +981,7 @@ complet, lui, vit dans le dépôt distant (GitHub, puis GitLab après transfert)
 
 - **Superviseur / admin FAST** : Abdu (Abdessamad Amrhar) — accès, droits S3,
   certificat CA.
-- **Branche RF / GNU Radio** : Camelia.
+- **Branche RF / GNU Radio** : Camila.
 - **Auteur** : Théo Schmitt — theo.schmitt02@gmail.com (questions d'archéologie
   uniquement : tout ce qui est nécessaire est censé être dans ce document — si
   quelque chose manque, c'est un bug de la passation, à corriger dans

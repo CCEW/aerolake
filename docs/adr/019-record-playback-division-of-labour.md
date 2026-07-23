@@ -23,7 +23,7 @@ the SDR hardware exist for. AeroLake currently *also* captures from an SDR
 (`soapy_source.py`), which overlaps GNU Radio's `record.grc` and risks
 re-implementing DSP in Python.
 
-There is also a **human** split: Théo owns the lakehouse; **Camelia owns the
+There is also a **human** split: Théo owns the lakehouse; **Camila owns the
 GNU Radio / RF branch**. An architecture that matches the team is easier to run.
 
 The bridge already exists and is format-free: the **`.sigmf-data` file** is raw
@@ -35,7 +35,7 @@ no custom format (see ADR-007, ADR-013).
 **Split record/playback by each tool's strength, with the `.sigmf-data` file as
 the contract between them.**
 
-- **Record.** GNU Radio (Camelia) is *the* heavy RF recorder: SDR →
+- **Record.** GNU Radio (Camila) is *the* heavy RF recorder: SDR →
   `.sigmf-data`/`.sigmf-meta` on disk, at full rate. AeroLake **ingests** those
   into MinIO (tags, metadata, preview, catalogue). AeroLake keeps its own
   `soapy_source` capture **only** for synthetic / light RTL-SDR / quick test
@@ -68,7 +68,7 @@ the contract between them.**
 
 - **Each tool does what it is best at** — no high-performance RF engine
   re-implemented in Python (which would be worse and unfinishable).
-- **The architecture matches the team** (lakehouse = Théo, RF = Camelia), which
+- **The architecture matches the team** (lakehouse = Théo, RF = Camila), which
   is a strong signal the boundary is in the right place.
 - **The contract is a standard file**, so the two halves evolve independently.
 - **Leaves a finishable, hand-offable target** for the lakehouse owner: storage
@@ -86,7 +86,7 @@ the contract between them.**
 
 - Two capture paths coexist for a while (AeroLake synthetic/light + GNU Radio
   heavy); acceptable, but document which to use when.
-- Real RF re-emission stays gated on GNU Radio + TX hardware + Camelia — by
+- Real RF re-emission stays gated on GNU Radio + TX hardware + Camila — by
   design, not a gap to close in the Python codebase.
 - Native-datatype storage and the fetch bridge are **not yet implemented**; this
   ADR records the direction, not done work.

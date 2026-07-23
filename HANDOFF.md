@@ -106,7 +106,7 @@ uv run ruff check .   &&   uv run mypy src   &&   uv run pytest
 ## 8. Évolutions prévues (non faites)
 - **GUI : formulaire de config** (fréquence/durée → génère le TOML) pour ne plus
   manipuler de fichier du tout ; la carte cliquable en était la première brique.
-- **Ré-émission RF** : GNU Radio + BladeRF TX, câblé + atténué — avec Camelia
+- **Ré-émission RF** : GNU Radio + BladeRF TX, câblé + atténué — avec Camila
   (division du travail : ADR-019).
 - **Couche SQL / Apache Iceberg** : le « vrai » lakehouse requêtable — évolution
   future (cf. ADR-013, `docs/pitch-architecture.md`).

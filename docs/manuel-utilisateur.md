@@ -98,7 +98,7 @@ Trois modes, du plus simple au plus complet :
 3. **Ré-émettre en RF** (GNU Radio + SDR émetteur, ex. BladeRF) : bouton
    **« Exporter pour GNU Radio »** dans l'onglet Playback → charger le
    `.sigmf-data` dans le flowgraph `gnuradio/playback.grc`. *(Volet RF du
-   projet — voir ADR-019 ; référente : Camelia.)*
+   projet — voir ADR-019 ; référente : Camila.)*
 
 ## 6. Pour les utilisateurs avancés : la ligne de commande
 
