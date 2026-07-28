@@ -265,7 +265,7 @@ def _render_header() -> None:
         <div class="al-hero">
           <div class="al-kicker">● LASSENA · RF Lakehouse</div>
           <h1 class="al-title">Aerolake</h1>
-          <p class="al-sub">Capture RF → SigMF → MinIO, en un clic.</p>
+          <p class="al-sub">RF capture → SigMF → MinIO, in one click.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -361,14 +361,14 @@ def _do_capture(
         try:
             geolocation = _resolve_geolocation(config)
         except RuntimeError as exc:  # gpsd requested but unreachable
-            st.error(f"Erreur GPS : {exc}")
+            st.error(f"GPS error: {exc}")
             return
 
     location_name = config.location.name if config.location is not None else None
     mobile = config.location.mobile if config.location is not None else False
 
     try:
-        with st.spinner("Capture en cours…"):
+        with st.spinner("Capturing…"):
             prepared = prepare_capture(
                 signal_type=config.signal_type,
                 signal_type_detail=config.signal_type_detail,
@@ -382,7 +382,7 @@ def _do_capture(
                 rich=_build_rich_metadata(config, geolocation),
             )
     except Exception as exc:  # acquisition / encoding failure
-        st.error(f"Erreur de capture : {exc}")
+        st.error(f"Capture failed: {exc}")
         return
 
     st.session_state.prepared = prepared
@@ -412,20 +412,20 @@ def _location_picker(config: CaptureConfig) -> dict[str, object] | None:
     else:
         center = (45.5017, -73.5673)  # Montréal
 
-    with st.expander("📍 Régler la position de l'antenne sur la carte (optionnel)"):
-        st.caption("Clique l'emplacement exact de l'antenne (zoome pour la précision).")
+    with st.expander("📍 Set the antenna position on the map (optional)"):
+        st.caption("Click the exact antenna spot (zoom in for precision).")
         fmap = folium.Map(location=list(center), zoom_start=15)
         folium.Marker(list(center), tooltip="Antenne").add_to(fmap)
         try:
             data = st_folium(fmap, height=320, width=700, key="locmap")
         except Exception:
-            st.caption("Carte indisponible (hors-ligne ?).")
+            st.caption("Map unavailable (offline?).")
             data = None
         if data and data.get("last_clicked"):
             lat = float(data["last_clicked"]["lat"])
             lon = float(data["last_clicked"]["lng"])
             st.session_state.picked_latlon = (lat, lon)
-            st.success(f"Position choisie : {lat:.5f}, {lon:.5f}")
+            st.success(f"Position selected: {lat:.5f}, {lon:.5f}")
 
     picked = st.session_state.get("picked_latlon")
     if picked is not None:
@@ -436,71 +436,71 @@ def _location_picker(config: CaptureConfig) -> dict[str, object] | None:
 
 def _render_result(prepared: PreparedCapture) -> None:
     """Post-capture recap + spectrum + the push / keep / discard actions."""
-    st.subheader("Capture terminée")
+    st.subheader("Capture complete")
 
     sample_rate = float(prepared.data_metadata.get("sample-rate") or 0)
     duration = prepared.sample_count / sample_rate if sample_rate else 0.0
     c1, c2, c3 = st.columns(3)
-    c1.metric("Échantillons", f"{prepared.sample_count:,}")
-    c2.metric("Taille", f"{prepared.size_bytes / 1e6:.1f} MB")
-    c3.metric("Durée", f"{duration:.2f} s")
+    c1.metric("Samples", f"{prepared.sample_count:,}")
+    c2.metric("Size", f"{prepared.size_bytes / 1e6:.1f} MB")
+    c3.metric("Duration", f"{duration:.2f} s")
     if prepared.overflow_count:
-        st.warning(f"⚠ {prepared.overflow_count} overflow(s) pendant la capture.")
+        st.warning(f"⚠ {prepared.overflow_count} overflow(s) during the capture.")
 
     preview = st.session_state.get("preview")
     if preview is not None:
         st.image(preview, caption="Spectre + waterfall", use_container_width=True)
     else:
-        st.info("Aperçu indisponible pour cette capture.")
+        st.info("No preview available for this capture.")
 
-    st.markdown("**Que faire de cette capture ?**")
+    st.markdown("**What do you want to do with this capture?**")
     a, b, c = st.columns(3)
 
     if a.button("⬆  Pousser dans MinIO", type="primary", use_container_width=True):
         try:
-            with st.spinner("Upload vers MinIO…"):
+            with st.spinner("Uploading to MinIO…"):
                 result = push_capture(prepared, with_preview=True)
             st.session_state.prepared = None
-            st.success(f"✓ Poussé dans MinIO — session {result.session_id}")
+            st.success(f"✓ Pushed to MinIO — session {result.session_id}")
             st.caption(result.data_key)
         except StorageError as exc:
-            st.error(f"Erreur de stockage : {exc}")
+            st.error(f"Storage error: {exc}")
         except Exception as exc:
-            st.error(f"Erreur inattendue : {exc}")
+            st.error(f"Unexpected error: {exc}")
 
     if b.button("💾  Garder en local", use_container_width=True):
         try:
             out_dir = save_capture_locally(prepared)
             st.session_state.prepared = None
-            st.success(f"✓ Gardé en local : {out_dir}")
+            st.success(f"✓ Kept locally: {out_dir}")
         except OSError as exc:
-            st.error(f"Échec de la sauvegarde : {exc}")
+            st.error(f"Could not save locally: {exc}")
 
     if c.button("🗑  Jeter", use_container_width=True):
         st.session_state.prepared = None
-        st.info("Capture jetée — rien n'a été stocké.")
+        st.info("Capture discarded — nothing was stored.")
 
 
 def _render_capture() -> None:
     """The 📡 Capture tab: upload a config, run a capture, push/keep/discard."""
     # Step 1 — the user uploads a capture config (TOML recommended, JSON ok).
     uploaded = st.file_uploader(
-        "Fichier de configuration de capture",
+        "Capture configuration file",
         type=["toml", "json"],
-        help="Dépose un .toml (recommandé) ou .json décrivant la capture.",
+        help="Drop a .toml (recommended) or .json describing the capture.",
     )
     if uploaded is None:
-        st.info("⬆️ Dépose un fichier de configuration pour commencer.")
+        st.info("⬆️ Drop a configuration file to get started.")
         return
 
     # Step 2 — parse + validate, then show a recap before doing anything.
     try:
         config = _load_uploaded(uploaded)
     except ConfigError as exc:
-        st.error(f"Configuration invalide : {exc}")
+        st.error(f"Invalid configuration: {exc}")
         return
 
-    st.subheader("Aperçu de la capture")
+    st.subheader("Capture summary")
     for label, value in _config_summary(config):
         col_label, col_value = st.columns([1, 2])
         col_label.markdown(f"**{label}**")
@@ -511,7 +511,7 @@ def _render_capture() -> None:
     geo_override = _location_picker(config)
 
     # Step 3 — launch. The button only returns True on the run where it's clicked.
-    if st.button("▶  Démarrer la capture", type="primary", use_container_width=True):
+    if st.button("▶  Start the capture", type="primary", use_container_width=True):
         _do_capture(config, geo_override)
 
     # Step 4/5 — if a capture is prepared (this run or a previous one), show the
@@ -537,11 +537,11 @@ def _render_playback() -> None:
     try:
         keys = reader.list_captures()
     except Exception as exc:  # StorageError, or a raw connection error if MinIO is down
-        st.error(f"MinIO injoignable : {exc}")
-        st.caption("Vérifie que MinIO tourne et que le .env pointe au bon endroit.")
+        st.error(f"MinIO unreachable: {exc}")
+        st.caption("Check that MinIO is running and that the .env points to the right endpoint.")
         return
     if not keys:
-        st.info("Aucune capture dans MinIO. Fais d'abord une capture (onglet 📡 Capture).")
+        st.info("No capture in MinIO yet. Record one first (📡 Capture tab).")
         return
 
     def _label(key: str) -> str:
@@ -550,7 +550,7 @@ def _render_playback() -> None:
         folder = parts[2] if len(parts) > 2 else key
         return f"{signal} · {folder}"
 
-    data_key = st.selectbox("Capture à rejouer", keys, format_func=_label)
+    data_key = st.selectbox("Capture to replay", keys, format_func=_label)
     if not data_key:
         return
 
@@ -561,9 +561,9 @@ def _render_playback() -> None:
     total_s = n_samples / sr if sr else 0.0
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Fréquence", f"{cf / 1e6:.3f} MHz")
+    c1.metric("Frequency", f"{cf / 1e6:.3f} MHz")
     c2.metric("Sample rate", f"{sr / 1e6:.2f} MS/s")
-    c3.metric("Durée", f"{total_s:.1f} s")
+    c3.metric("Duration", f"{total_s:.1f} s")
 
     # Preview PNG stored next to the capture (cheap; no full download).
     preview_key = data_key[: -len(".sigmf-data")] + "-preview.png"
@@ -571,30 +571,30 @@ def _render_playback() -> None:
         if storage.object_exists(preview_key):
             st.image(
                 storage.download_bytes(preview_key),
-                caption="Aperçu (au moment de l'enregistrement)",
+                caption="Preview (as recorded)",
                 use_container_width=True,
             )
     except StorageError:
         pass
 
     # --- Scrub: render the spectrum of any time window (HTTP Range, ADR-009) --
-    st.markdown("**Visualiser un instant de la capture**")
+    st.markdown("**Inspect any moment of the capture**")
     if total_s <= 0 or sr <= 0:
-        st.caption("Pas de sample rate exploitable pour cette capture.")
+        st.caption("No usable sample rate for this capture.")
     else:
         col_a, col_b = st.columns(2)
-        start = col_a.slider("Début (s)", 0.0, round(max(0.0, total_s - 0.1), 2), 0.0, 0.1)
+        start = col_a.slider("Start (s)", 0.0, round(max(0.0, total_s - 0.1), 2), 0.0, 0.1)
         max_win = round(min(2.0, total_s), 2)
-        dur = col_b.slider("Fenêtre (s)", 0.05, max_win, min(0.5, max_win), 0.05)
-        if st.button("🔎 Afficher le spectre de la fenêtre", use_container_width=True):
+        dur = col_b.slider("Window (s)", 0.05, max_win, min(0.5, max_win), 0.05)
+        if st.button("🔎 Show the spectrum of this window", use_container_width=True):
             try:
-                with st.spinner("Lecture de la fenêtre (HTTP Range)…"):
+                with st.spinner("Reading the window (HTTP Range)…"):
                     content = reader.read_segment(data_key, start_s=start, duration_s=dur)
             except StorageError as exc:
-                st.error(f"Lecture impossible : {exc}")
+                st.error(f"Read failed: {exc}")
             else:
                 if len(content.samples) == 0:
-                    st.warning("Fenêtre vide (au-delà de la fin ?).")
+                    st.warning("Empty window (past the end of the capture?).")
                 else:
                     png = render_spectrum_png(content.samples, sr, cf)
                     st.image(
@@ -604,18 +604,18 @@ def _render_playback() -> None:
                     )
 
     # --- Live ZeroMQ stream: show the ready-to-run command -------------------
-    st.markdown("**Diffuser en direct (ZeroMQ)**")
+    st.markdown("**Stream live over the network (ZeroMQ)**")
     st.caption(
-        "Sur le poste d'acquisition, lance la diffusion ; depuis n'importe quel poste, abonne-toi :"
+        "On the acquisition station, start publishing; from any machine, subscribe:"
     )
     st.code(
         f"uv run aerolake-stream --key {data_key} --bind tcp://*:5555\n"
-        "uv run aerolake-subscribe --address tcp://<ip-du-poste>:5555",
+        "uv run aerolake-subscribe --address tcp://<station-ip>:5555",
         language="bash",
     )
 
     # --- Export for GNU Radio (the bridge to RF re-emission, mode 2) ---------
-    st.markdown("**Exporter pour GNU Radio** (ré-émission RF — mode 2)")
+    st.markdown("**Export for GNU Radio** (RF re-emission — mode 2)")
     meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
     try:
         st.download_button(
@@ -626,7 +626,7 @@ def _render_playback() -> None:
         )
         # The .sigmf-data can be huge — only fetch it into memory if the user
         # opts in (a download_button needs the bytes upfront, on every rerun).
-        if st.checkbox("Préparer le téléchargement du .sigmf-data"):
+        if st.checkbox("Prepare the .sigmf-data download"):
             size = storage.object_size(data_key)
             if size <= 100_000_000:
                 st.download_button(
@@ -637,11 +637,11 @@ def _render_playback() -> None:
                 )
             else:
                 st.caption(
-                    f"Fichier volumineux ({size / 1e6:.0f} Mo) — récupère-le plutôt "
-                    f"via la console MinIO : {data_key}"
+                    f"Large file ({size / 1e6:.0f} MB) — fetch it from the "
+                    f"MinIO console instead: {data_key}"
                 )
     except StorageError as exc:
-        st.error(f"Export impossible : {exc}")
+        st.error(f"Export failed: {exc}")
 
 
 def main() -> None:
