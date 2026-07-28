@@ -1,69 +1,69 @@
 # =====================================================================
-# AeroLake — modèle de configuration de capture (format TOML)
+# AeroLake — capture configuration template (TOML format)
 # ---------------------------------------------------------------------
-# Copiez ce fichier, adaptez les valeurs, puis lancez :
-#     uv run aerolake-capture --config ma_capture.toml
-# (ou simplement ./acquire.sh ma_capture.toml)
+# Copy this file, adjust the values, then run:
+#     uv run aerolake-capture --config my_capture.toml
+# (or simply ./acquire.sh my_capture.toml)
 #
-# Le TOML autorise les commentaires (contrairement au JSON) : chaque champ
-# est expliqué ci-dessous. Les champs marqués « optionnel » peuvent être
-# supprimés. Tout champ inconnu est REJETÉ (sécurité anti-faute de frappe).
+# TOML allows comments (unlike JSON), so every field is explained below.
+# Fields marked "optional" can be deleted. Any unknown field is REJECTED
+# (typo protection).
 # =====================================================================
 
-# --- Quoi capturer ---------------------------------------------------
-signal_type        = "gnss_l1"          # catégorie (sert au rangement + aux tags MinIO)
-signal_type_detail = "L1 C/A"           # optionnel : précision libre
-center_freq        = 1_575_420_000      # fréquence centrale en Hz (GNSS L1 = 1575.42 MHz)
-sample_rate        = 2_000_000          # taux d'échantillonnage en Hz (= bande passante)
-duration_s         = 10                 # durée de la capture en secondes
+# --- What to capture -------------------------------------------------
+signal_type        = "gnss_l1"          # category (drives the storage layout + MinIO tags)
+signal_type_detail = "L1 C/A"           # optional: free-form precision
+center_freq        = 1_575_420_000      # centre frequency in Hz (GNSS L1 = 1575.42 MHz)
+sample_rate        = 2_000_000          # sample rate in Hz (= captured bandwidth)
+duration_s         = 10                 # capture duration in seconds
 
-# --- Métadonnées descriptives (optionnelles, écrites dans le .sigmf-meta) ---
-author      = "Théo Schmitt <theo.schmitt@lassena.etsmtl.ca>"
-description = "Capture GNSS L1 depuis le toit du labo"
+# --- Descriptive metadata (optional, written into the .sigmf-meta) ----
+author      = "Theo Schmitt <theo.schmitt@lassena.etsmtl.ca>"
+description = "GNSS L1 capture from the lab roof"
 license     = "https://creativecommons.org/licenses/by-sa/4.0/"
 operator    = "schmitt"
 
-# --- Source : d'où vient le signal -----------------------------------
-# type = "soapy"     -> vrai SDR via SoapySDR (RTL-SDR, BladeRF, …)
-# type = "synthetic" -> signal généré en logiciel (aucun matériel requis)
+# --- Source: where the signal comes from ------------------------------
+# type = "soapy"     -> real SDR through SoapySDR (RTL-SDR, BladeRF, …)
+# type = "synthetic" -> signal generated in software (no hardware needed)
 [source]
 type    = "soapy"
-driver  = "rtlsdr"   # pilote SoapySDR : "rtlsdr", "bladerf", …
-agc     = true       # contrôle automatique de gain
-# antenna = "RX"     # optionnel : port d'antenne du SDR
+driver  = "rtlsdr"   # SoapySDR driver: "rtlsdr", "bladerf", …
+agc     = true       # automatic gain control
+# antenna = "RX"     # optional: the SDR's antenna port
 
-# Variante signal de test (décommentez ce bloc et supprimez celui du dessus) :
+# Test-signal variant (uncomment this block and delete the one above):
 # [source]
 # type          = "synthetic"
-# tone_offset_hz = 100_000      # décalage de la tonalité vs la fréquence centrale
-# snr_db         = 20.0         # rapport signal/bruit
-# seed           = 1            # graine aléatoire (reproductible)
+# tone_offset_hz = 100_000      # tone offset from the centre frequency
+# snr_db         = 20.0         # signal-to-noise ratio
+# seed           = 1            # random seed (reproducible)
 
-# --- Où : lieu de la capture (optionnel) -----------------------------
+# --- Where: the capture location (optional) ---------------------------
 [location]
-name   = "LASSENA, ETS Montréal"
-mobile = false       # true si le récepteur est en mouvement (véhicule)
-gps    = false       # true = lire UNE position live depuis gpsd au moment de la capture
-                     #        (exclusif avec le bloc [location.geolocation] ci-dessous)
+name   = "LASSENA, ETS Montreal"
+mobile = false       # true if the receiver is moving (vehicle)
+gps    = false       # true = read ONE live fix from gpsd at capture time
+                     #        (exclusive with the [location.geolocation] block below)
 
-# Position manuelle (optionnelle) — supprimez si gps = true
+# Manual position (optional) — delete it if gps = true
 [location.geolocation]
-latitude  = 45.4946  # degrés décimaux (-90 à 90)
-longitude = -73.5623 # degrés décimaux (-180 à 180)
-altitude  = 50.0     # mètres (optionnel)
+latitude  = 45.4946  # decimal degrees (-90 to 90)
+longitude = -73.5623 # decimal degrees (-180 to 180)
+altitude  = 50.0     # metres (optional)
 
-# --- Annotation décrivant toute la capture (optionnelle) -------------
+# --- Annotation describing the whole capture (optional) ---------------
 [annotation]
 label   = "GNSS L1 C/A"
-comment = "ciel ouvert, antenne active"
-# Bande occupée (les DEUX bornes ensemble, ou aucune) :
+comment = "open sky, active antenna"
+# Occupied band (BOTH edges together, or neither):
 freq_lower_edge = 1_575_170_000
 freq_upper_edge = 1_575_670_000
 
-# --- Extension antenne SigMF (optionnelle) ---------------------------
-# Si ce bloc est présent, `model` est obligatoire.
+# --- SigMF antenna extension (optional) -------------------------------
+# If this block is present, `model` is required.
 [antenna]
 model = "Tallysman TW3742"
-type  = "patch"          # optionnel
-gain  = 28.0             # dBi (optionnel)
-# polarization, azimuth_angle, elevation_angle… vont dans l'annotation (gérés par l'encodeur)
+type  = "patch"          # optional
+gain  = 28.0             # dBi (optional)
+# polarization, azimuth_angle, elevation_angle… go into the annotation (handled by the encoder)

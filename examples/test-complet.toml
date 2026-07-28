@@ -1,8 +1,8 @@
-# Capture banc RTL-SDR — générateur câblé direct (sans antenne).
+# RTL-SDR bench capture: generator cabled directly (no antenna).
 # Équivalent TOML de test-complet.json.   Lancer : ./acquire.sh examples/test-complet.toml
 
 signal_type        = "test_banc"
-signal_type_detail = "tonalité CW"
+signal_type_detail = "CW tone"
 center_freq        = 1_575_420_000     # Hz
 sample_rate        = 2_000_000         # Hz
 duration_s         = 10                # secondes
