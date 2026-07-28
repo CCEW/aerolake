@@ -1,35 +1,34 @@
-# AeroLake — le pitch : pourquoi cette architecture ?
+# AeroLake — the pitch: why this architecture?
 
-Document de vulgarisation. Il explique **le problème** qu'on résout et **pourquoi**
-on a choisi ces trois briques techniques. À lire avant le code ; il ne suppose
-aucune connaissance préalable de SigMF, MinIO ou des data lakehouses.
+A plain-language document. It explains **the problem** we solve and **why** we
+picked these three technical bricks. Read it before the code; it assumes no
+prior knowledge of SigMF, MinIO or data lakehouses.
 
 ---
 
-## 1. Le problème
+## 1. The problem
 
-Un laboratoire comme le LASSENA capte énormément de **signaux radiofréquences
-(RF)** : GNSS (GPS), Iridium, Starlink… Chaque enregistrement, c'est un flot
-d'**échantillons IQ** — des millions de nombres complexes par seconde. Une
-minute de capture à 2 MHz, c'est déjà ~1 Go.
+A laboratory like LASSENA records a lot of **radio-frequency (RF) signals**:
+GNSS (GPS), Iridium, Starlink… Each recording is a stream of **IQ samples** —
+millions of complex numbers per second. One minute of capture at 2 MHz is
+already ~1 GB.
 
-Très vite, sans organisation, c'est le chaos :
+Without organisation, chaos sets in fast:
 
-- **Des fichiers binaires muets.** `capture_03_final_v2.bin` : quelle fréquence ?
-  quel taux d'échantillonnage ? quel récepteur ? quand ? où ? Personne ne sait.
-- **Des formats maison.** Chacun invente sa convention ; six mois plus tard plus
-  personne ne sait relire les captures d'un collègue parti.
-- **Pas de recherche.** « Donne-moi toutes les captures GPS L1 validées prises
-  sur le toit » devient une fouille manuelle de dossiers.
-- **Le volume.** On ne peut pas charger un fichier de plusieurs Go en RAM juste
-  pour en relire 10 secondes.
+- **Mute binary files.** `capture_03_final_v2.bin`: which frequency? which
+  sample rate? which receiver? when? where? Nobody knows.
+- **Home-grown formats.** Everyone invents their own convention; six months
+  later nobody can read the captures of a colleague who has left.
+- **No search.** "Give me every validated GPS L1 capture taken on the roof"
+  turns into a manual folder hunt.
+- **The volume.** You cannot load a multi-GB file into RAM just to read back
+  10 seconds of it.
 
-**L'objectif d'AeroLake** : que n'importe quel membre du labo puisse
-**retrouver, relire et rejouer** n'importe quelle capture, grâce à des
-**métadonnées standardisées**. Capturer → stocker → indexer → rejouer, sans
-chaos.
+**AeroLake's goal**: let any member of the lab **find, read back and replay**
+any capture, thanks to **standardised metadata**. Capture → store → index →
+replay, without chaos.
 
-Le pipeline, en une ligne :
+The pipeline, in one line:
 
 ```
 Producer (capture → SigMF)  →  MinIO (lakehouse)  →  Consumer (extraction → ZeroMQ)
@@ -37,109 +36,105 @@ Producer (capture → SigMF)  →  MinIO (lakehouse)  →  Consumer (extraction 
 
 ---
 
-## 2. Le triptyque technique
+## 2. The technical triptych
 
-Trois choix structurants. Chacun répond à un morceau précis du problème.
+Three structuring choices. Each answers a precise part of the problem.
 
-### 🅰 SigMF — pour standardiser les métadonnées
+### 🅰 SigMF — to standardise the metadata
 
-[SigMF](https://github.com/sigmf/SigMF) (*Signal Metadata Format*) est un
-**standard ouvert** pour décrire un enregistrement RF. Une capture = deux
-fichiers :
+[SigMF](https://github.com/sigmf/SigMF) (*Signal Metadata Format*) is an **open
+standard** for describing an RF recording. One capture = two files:
 
-- `…​.sigmf-data` : les octets bruts des échantillons IQ.
-- `…​.sigmf-meta` : un JSON lisible qui décrit tout — fréquence centrale, taux
-  d'échantillonnage, type de données, date, position, antenne, annotations…
+- `….sigmf-data`: the raw bytes of the IQ samples.
+- `….sigmf-meta`: a readable JSON describing everything — centre frequency,
+  sample rate, data type, date, position, antenna, annotations…
 
-**Pourquoi SigMF plutôt qu'un format maison ?**
+**Why SigMF rather than a home-grown format?**
 
-- **Auto-descriptif** : la capture porte sa propre notice. Plus de fichier muet.
-- **Interopérable** : GNU Radio, les outils de la communauté SDR, et n'importe
-  quel labo lisent SigMF nativement. On ne s'enferme pas dans notre tambouille.
-- **Pérenne** : un standard documenté survit au départ de celui qui l'a écrit.
-- **Validable** : on vérifie la conformité d'une capture *avant* de la stocker —
-  une erreur de structure est attrapée tout de suite, pas six mois plus tard.
+- **Self-describing**: the capture carries its own manual. No more mute files.
+- **Interoperable**: GNU Radio, the SDR community tools, and any other lab read
+  SigMF natively. We do not lock ourselves into our own concoction.
+- **Durable**: a documented standard survives the departure of whoever wrote it.
+- **Verifiable**: we check a capture's conformance *before* storing it — a
+  structural error is caught immediately, not six months later.
 
-> C'est le sens du *« piège GPSD »* (voir ADR-016) : même la position GPS, on la
-> traduit dans le champ standard `core:geolocation` de SigMF, au lieu de
-> recopier le format brut du démon GPS.
+> That is the meaning of the *"GPSD trap"* (see ADR-016): even the GPS position
+> is translated into SigMF's standard `core:geolocation` field, instead of
+> copying the raw format of the GPS daemon.
 
-### 🅱 MinIO — pour le stockage objet
+### 🅱 MinIO — for the object storage
 
-[MinIO](https://min.io/) est un **stockage objet compatible S3**, open-source,
-qu'on fait tourner **en local** (ou sur un serveur du labo, ici
-`fast.etsmtl.ca`).
+[MinIO](https://min.io/) is an **S3-compatible object storage**, open-source,
+which we run **locally** (or on a lab server, here `fast.etsmtl.ca`).
 
-**Pourquoi MinIO ?**
+**Why MinIO?**
 
-- **Compatible S3** : on parle le même langage qu'Amazon S3 — l'API standard de
-  l'industrie. Le code marche pareil en local et dans le cloud (un simple
-  changement d'URL). On n'est lié à aucun fournisseur.
-- **Scalable et performant** : conçu pour de gros volumes binaires, exactement
-  notre cas (des Go d'IQ).
-- **Métadonnées et tags natifs** : chaque objet porte des en-têtes
-  (`x-amz-meta-*`) et des **tags** indexables, qu'on peut lire *sans télécharger
-  le fichier*. C'est la clé de la recherche rapide.
-- **Open-source et local** : pas de coût cloud, données maîtrisées, idéal pour un
-  labo.
+- **S3-compatible**: we speak the same language as Amazon S3 — the industry's
+  standard API. The code works the same locally and in the cloud (just change
+  the URL). We are tied to no vendor.
+- **Scalable and fast**: designed for large binary volumes, exactly our case
+  (gigabytes of IQ).
+- **Native metadata and tags**: every object carries headers (`x-amz-meta-*`)
+  and indexable **tags**, readable *without downloading the file*. That is the
+  key to fast search.
+- **Open-source and local**: no cloud cost, data under our control, ideal for a
+  lab.
 
-### 🅲 Data Lakehouse — pour indexer et requêter intelligemment
+### 🅲 Data lakehouse — to index and query intelligently
 
-Petite mise au point de vocabulaire, parce que c'est tout l'intérêt :
+A short vocabulary clarification, because this is the whole point:
 
-| | Description | Limite |
+| | Description | Limit |
 |---|---|---|
-| **Data Lake** | On déverse tout en vrac : « le lac de données ». Stockage brut, pas cher, flexible. | Sans index, retrouver quelque chose = fouiller à la main. |
-| **Data Warehouse** | Données nettoyées, structurées, requêtables en SQL. | Rigide, coûteux, mal adapté au binaire brut. |
-| **Data Lakehouse** | **Le meilleur des deux** : le stockage brut d'un lac **+** une couche de catalogage intelligente pour requêter (idéalement en SQL). | — |
+| **Data lake** | Everything is poured in as-is: "the lake of data". Raw storage, cheap, flexible. | Without an index, finding something means digging by hand. |
+| **Data warehouse** | Cleaned, structured data, queryable in SQL. | Rigid, expensive, poorly suited to raw binary. |
+| **Data lakehouse** | **The best of both**: a lake's raw storage **+** an intelligent cataloguing layer to query it (ideally in SQL). | — |
 
-**Pourquoi viser un Lakehouse et pas juste un Lake ?**
-Parce qu'on veut les deux : garder les octets bruts (SigMF sur MinIO, pas cher et
-flexible) **ET** pouvoir poser des questions par-dessus — « toutes les captures
-Iridium validées de juin », « celles prises en mouvement » — sans rapatrier un
-seul octet d'échantillon.
+**Why aim for a lakehouse and not just a lake?**
+Because we want both: keep the raw bytes (SigMF on MinIO, cheap and flexible)
+**AND** be able to ask questions on top — "every validated Iridium capture from
+June", "the ones taken while moving" — without fetching a single sample byte.
 
 ---
 
-## 3. Où en est AeroLake, honnêtement
+## 3. Where AeroLake honestly stands
 
-C'est le point à **ne pas survendre** en présentation. Aujourd'hui, AeroLake est
-un **Data Lake avec une couche de catalogage**, pas (encore) un Lakehouse SQL
-complet :
+This is the point **not to oversell** in a presentation. Today AeroLake is a
+**data lake with a cataloguing layer**, not (yet) a full SQL lakehouse:
 
-- ✅ **Stockage brut** : SigMF sur MinIO, avec une convention de clés claire
+- ✅ **Raw storage**: SigMF on MinIO, with a clear key convention
   (`{type}/{date}/{session}/…`).
-- ✅ **Couche de catalogage** : les **tags S3** (`signal-type`, `quality`,
-  `hardware`, `recorder`…) et les métadonnées d'objet rendent les captures
-  **filtrables sans télécharger** (commande `aerolake-list`, voir ADR-003). On
-  promeut aussi un tag qualité `raw → validated/rejected`.
-- ✅ **Regroupement** : les *Collections* SigMF lient plusieurs captures d'une
-  même campagne.
-- ✅ **Extraction ciblée** : lecture partielle par *HTTP Range* (relire t=200s
-  sans charger tout le fichier) puis diffusion sur un bus **ZeroMQ Pub/Sub**.
-- 🔜 **Couche SQL / analytique** (Parquet, Apache Iceberg) : c'est *la* brique
-  qui ferait passer de « Lake catalogué » à « vrai Lakehouse requêtable en
-  SQL ». Elle est **identifiée comme évolution future** (elle avait été explorée
-  puis mise de côté, ADR-013, pour recentrer sur le pipeline RX du mandat).
+- ✅ **Cataloguing layer**: the **S3 tags** (`signal-type`, `quality`,
+  `hardware`, `recorder`…) and the object metadata make captures **filterable
+  without downloading** (the `aerolake-list` command, see ADR-003). We also
+  promote a quality tag `raw → validated/rejected`.
+- ✅ **Grouping**: SigMF *Collections* link several captures from one campaign.
+- ✅ **Targeted extraction**: partial reads through *HTTP Range* (read back
+  t=200s without loading the whole file) then publication on a **ZeroMQ Pub/Sub**
+  bus.
+- 🔜 **SQL / analytical layer** (Parquet, Apache Iceberg): this is *the* brick
+  that would turn a "catalogued lake" into a "real lakehouse queryable in SQL".
+  It is **identified as a future evolution** (it had been explored then set
+  aside, ADR-013, to refocus on the mandate's RX pipeline).
 
-**Formulation honnête pour le pitch :** « AeroLake pose les fondations d'un
-lakehouse RF — stockage objet standardisé + catalogage par tags et métadonnées.
-La couche de requêtage SQL est la prochaine étape naturelle. »
-
----
-
-## 4. Le fil rouge
-
-Tout tient ensemble grâce à **une idée** : la capture n'est jamais un fichier
-muet. Elle porte ses métadonnées (SigMF), exposées de façon indexable (tags
-MinIO), donc retrouvable et rejouable par tout le labo (extraction ciblée +
-ZeroMQ). SigMF répond au *quoi*, MinIO au *où*, le lakehouse au *comment on s'y
-retrouve*.
+**Honest wording for the pitch:** "AeroLake lays the foundations of an RF
+lakehouse — standardised object storage + cataloguing through tags and
+metadata. The SQL query layer is the natural next step."
 
 ---
 
-### Pour aller plus loin
+## 4. The common thread
 
-- Les décisions de conception détaillées : `docs/adr/` (chaque choix a son ADR).
-- Le recadrage sur le mandat (priorité au pipeline RX) : ADR-013.
-- Le contexte projet et l'historique : `docs/context/`.
+Everything holds together thanks to **one idea**: a capture is never a mute
+file. It carries its metadata (SigMF), exposed in an indexable way (MinIO
+tags), therefore findable and replayable by the whole lab (targeted extraction
++ ZeroMQ). SigMF answers *what*, MinIO answers *where*, the lakehouse answers
+*how you find your way around*.
+
+---
+
+### Going further
+
+- Detailed design decisions: `docs/adr/` (every choice has its ADR).
+- The refocus on the mandate (priority to the RX pipeline): ADR-013.
+- Project context and history: `docs/context/`.

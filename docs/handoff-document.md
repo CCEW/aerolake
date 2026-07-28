@@ -579,7 +579,7 @@ aerolake/
 | `gnuradio/` | `record.grc`/`playback.grc` — **system** GNU Radio (outside venv); the bridge = the `.sigmf-data` itself; headless validation: `grcc -o /tmp gnuradio/playback.grc` |
 
 *(The long, class-by-class version of this reference is on the "Complete code
-documentation" page and in `docs/documentation-code.md` — in French; ask Claude
+documentation" page and in `docs/code-documentation.md` — in French; ask Claude
 to translate any section you need.)*
 
 ---
@@ -730,12 +730,12 @@ tagging** (verified), and the discovery layer relies on tags (ADR-003).
 
 | Document | Role |
 |---|---|
-| `docs/carte-du-code.md` | the one-page code map (French — ask Claude to translate) |
-| `docs/manuel-utilisateur.md` | the user guide (French; also on Confluence) |
-| `docs/documentation-code.md` | the detailed code reference (French; also on Confluence) |
+| `docs/code-map.md` | the one-page code map (French — ask Claude to translate) |
+| `docs/user-manual.md` | the user guide (French; also on Confluence) |
+| `docs/code-documentation.md` | the detailed code reference (French; also on Confluence) |
 | `HANDOFF.md` | the operational takeover cheat-sheet (short version of this document) |
 | `docs/adr/001…020` | every decision, dated and argued (in English) |
-| `docs/passation-en.md` | **this document** (Markdown source; French original: `docs/passation.md`) |
+| `docs/handoff-document.md` | **this document** (Markdown source; French original: `docs/handoff-document.md`) |
 | `docs/context/historique-discussions.md` | the pre-repo history (May 2026) |
 
 ## 9.2 One-minute glossary
@@ -767,7 +767,7 @@ tagging** (verified), and the discovery layer relies on tags (ADR-003).
 - **RF branch / GNU Radio**: Camila.
 - **Author**: Théo Schmitt — theo.schmitt02@gmail.com (archaeology questions
   only: everything necessary is supposed to be in this document — if something
-  is missing, that's a handoff bug; fix it in `docs/passation-en.md`).
+  is missing, that's a handoff bug; fix it in `docs/handoff-document.md`).
 
 ---
 

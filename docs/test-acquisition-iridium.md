@@ -1,111 +1,111 @@
-# Test d'acquisition Iridium (RFSoC) — matériel & protocole
+# Iridium acquisition test (RFSoC) — hardware & protocol
 
-> Plan de test pour la captation Iridium avec le **RFSoC**, **intégrée à
-> AeroLake** (ingestion / qualité / visualisation).
+> Test plan for the Iridium acquisition with the **RFSoC**, **integrated into
+> AeroLake** (ingestion / quality / visualisation).
 >
-> **Note de cadrage — liberté de conception.** Le *Technical Report* de Lucien
-> Millet (§2-1.2 & 4-3.3) est utilisé ici uniquement comme **référence pour
-> comprendre la démarche** et fournir une **baseline éprouvée** (paramètres,
-> matériel). **Je reste libre de mes choix** : fréquence, canal, sample rate,
-> matériel et protocole peuvent être adaptés à mes objectifs — les valeurs
-> ci-dessous sont un point de départ, pas une contrainte.
+> **Scoping note — design freedom.** Lucien Millet's *Technical Report*
+> (§2-1.2 & 4-3.3) is used here only as a **reference to understand the
+> approach** and to provide a **proven baseline** (parameters, hardware).
+> **I remain free in my choices**: frequency, channel, sample rate, hardware and
+> protocol can be adapted to my objectives — the values below are a starting
+> point, not a constraint.
 
-## 1. Objectif
+## 1. Goal
 
-Capter le signal **Iridium** sur un canal simplex fixe, l'enregistrer en IQ,
-puis le **faire entrer dans le lakehouse AeroLake** (ingestion → MinIO →
-validation qualité → visualisation), pour valider la chaîne sur de la **vraie
-donnée RF**.
+Receive the **Iridium** signal on a fixed simplex channel, record it as IQ, then
+**bring it into the AeroLake lakehouse** (ingestion → MinIO → quality
+validation → visualisation), to validate the chain on **real RF data**.
 
-## 2. Rappel — structure du signal Iridium
+## 2. Reminder — Iridium signal structure
 
-- Constellation Iridium NEXT : 66 satellites, orbites polaires ~780 km.
-- Lien utilisateur : **1616 – 1626.5 MHz**
-  - Duplex 1616–1626 MHz (240 canaux)
-  - **Simplex 1626–1626.5 MHz** (12 canaux, *broadcast* — c'est ce qu'on vise)
-- Canaux continus utiles (transmis en permanence, idéaux pour l'analyse) :
-  - Ch 3 — Quaternary Messaging : **1626.104 MHz**
-  - **Ch 7 — Ring Alert : 1626.271 MHz** ← canal retenu par Lucien
-  - Ch 11 — Primary Messaging : **1626.438 MHz**
+- Iridium NEXT constellation: 66 satellites, polar orbits ~780 km.
+- User link: **1616 – 1626.5 MHz**
+  - Duplex 1616–1626 MHz (240 channels)
+  - **Simplex 1626–1626.5 MHz** (12 channels, *broadcast* — this is our target)
+- Useful continuous channels (transmitted permanently, ideal for analysis):
+  - Ch 3 — Quaternary Messaging: **1626.104 MHz**
+  - **Ch 7 — Ring Alert: 1626.271 MHz** ← the channel Lucien selected
+  - Ch 11 — Primary Messaging: **1626.438 MHz**
 
-## 3. Paramètres d'acquisition — baseline (d'après Lucien, à ajuster librement)
+## 3. Acquisition parameters — baseline (from Lucien, adjust freely)
 
-| Paramètre | Valeur | Pourquoi |
+| Parameter | Value | Why |
 |---|---|---|
-| Fréquence centrale | **1626.271 MHz** (Ch 7 Ring Alert) | canal simplex stable et prévisible |
-| Sample rate | **400 kHz** | couvre le canal Iridium (31,5 kHz) + marge Doppler/offset |
-| Bande passante | **= 400 kHz** | filtrage SDR calé sur la fenêtre → anti-aliasing |
-| Réf. horloge | **10 MHz externe** | l'horloge interne RFSoC dérive ~20 kHz → Doppler inexploitable |
-| Warm-up | **≥ 15 min** | stabilisation thermique (résiduel ~100 Hz même après) |
-| Durée d'enregistrement | à définir (ex. 10–30 min) | assez long pour plusieurs passages satellites |
+| Centre frequency | **1626.271 MHz** (Ch 7 Ring Alert) | stable and predictable simplex channel |
+| Sample rate | **400 kHz** | covers the Iridium channel (31.5 kHz) + Doppler/offset margin |
+| Bandwidth | **= 400 kHz** | SDR filtering matched to the window → anti-aliasing |
+| Clock reference | **external 10 MHz** | the RFSoC internal clock drifts ~20 kHz → Doppler unusable |
+| Warm-up | **≥ 15 min** | thermal stabilisation (~100 Hz residual even after) |
+| Recording duration | to define (e.g. 10–30 min) | long enough for several satellite passes |
 
-> ⚠️ **Le point le plus critique du rapport** : sans **référence 10 MHz
-> externe**, la dérive du RFSoC rend l'analyse Doppler fausse. Lucien a obtenu
-> ~50 Hz d'erreur Doppler avec un générateur 10 MHz ; le plan était un OCXO
-> **CTI OSC5A2B02**.
+> ⚠️ **The most critical point of the report**: without an **external 10 MHz
+> reference**, the RFSoC's drift makes the Doppler analysis wrong. Lucien
+> achieved ~50 Hz of Doppler error with a 10 MHz generator; the plan was an
+> OCXO **CTI OSC5A2B02**.
 
-## 4. Liste de matériel (Bill of Materials)
+## 4. Bill of materials
 
-| # | Élément | Détail / modèle (réf. labo) | Indispensable ? |
+| # | Item | Detail / model (lab ref.) | Essential? |
 |---|---|---|---|
-| 1 | **SDR — RFSoC** | carte RFSoC + logiciel d'acquisition de **Mohamed Same** | ✅ |
-| 2 | **Antenne Iridium** | active L-band — **Iridium-AT1621-12** (+ embase magnétique *Caan 33-27210-00-5000*) | ✅ |
-| 3 | **Référence 10 MHz externe** | générateur de signal 10 MHz **ou** OCXO **CTI OSC5A2B02** | ✅ (qualité Doppler) |
-| 4 | **Câbles coaxiaux** | SMA, faible perte (antenne → SDR ; réf. 10 MHz → SDR) | ✅ |
-| 5 | **Ordinateur hôte** | PC du labo (acquisition RFSoC) ; Raspberry Pi 5 utilisé en dynamique | ✅ |
-| 6 | **Accès toit + support antenne** | vue ciel dégagée ; supports 3D imprimés (Lucien) | ✅ |
-| 7 | **Oscilloscope** | vérifier le 10 MHz (comparer générateur vs OCXO) | ⭐ recommandé |
-| 8 | LNA / atténuateurs | si niveau trop faible / trop fort (à évaluer) | ⚪ selon besoin |
-| 9 | (Dynamique) **BladeRF 2.0** + antenne + VN100 (IMU) + GPS ublox | alternative mobile (méthode Wissem, large bande 10 MS/s @ 1622 MHz) | ⚪ autre régime |
+| 1 | **SDR — RFSoC** | RFSoC board + **Mohamed Same**'s acquisition software | ✅ |
+| 2 | **Iridium antenna** | active L-band — **Iridium-AT1621-12** (+ magnetic base *Caan 33-27210-00-5000*) | ✅ |
+| 3 | **External 10 MHz reference** | 10 MHz signal generator **or** OCXO **CTI OSC5A2B02** | ✅ (Doppler quality) |
+| 4 | **Coaxial cables** | SMA, low loss (antenna → SDR; 10 MHz ref → SDR) | ✅ |
+| 5 | **Host computer** | lab PC (RFSoC acquisition); Raspberry Pi 5 used in the dynamic setup | ✅ |
+| 6 | **Roof access + antenna mount** | clear sky view; 3D-printed mounts (Lucien) | ✅ |
+| 7 | **Oscilloscope** | check the 10 MHz (compare generator vs OCXO) | ⭐ recommended |
+| 8 | LNA / attenuators | if the level is too low / too high (to be assessed) | ⚪ as needed |
+| 9 | (Dynamic) **BladeRF 2.0** + antenna + VN100 (IMU) + ublox GPS | mobile alternative (Wissem's method, wideband 10 MS/s @ 1622 MHz) | ⚪ different regime |
 
-## 5. Protocole de test (étapes)
+## 5. Test protocol (steps)
 
-1. **Installation** : monter l'antenne Iridium sur le toit (ciel dégagé), relier
-   antenne → (LNA ?) → entrée RX du RFSoC en coaxial.
-2. **Horloge** : connecter la **référence 10 MHz externe** à l'entrée ref du
-   RFSoC. (Vérifier le signal à l'oscilloscope.)
-3. **Mise sous tension + warm-up** : allumer et **attendre ≥ 15 min**.
-4. **Configurer l'acquisition** (logiciel RFSoC de Mohamed Same) :
+1. **Installation**: mount the Iridium antenna on the roof (clear sky), connect
+   antenna → (LNA?) → the RFSoC's RX input over coax.
+2. **Clock**: connect the **external 10 MHz reference** to the RFSoC's ref
+   input. (Check the signal on the oscilloscope.)
+3. **Power up + warm-up**: switch on and **wait ≥ 15 min**.
+4. **Configure the acquisition** (Mohamed Same's RFSoC software):
    `center = 1626.271 MHz`, `sample_rate = 400 kHz`, `bandwidth = 400 kHz`.
-5. **Enregistrer** l'IQ pendant la durée choisie (ex. 10–30 min).
-6. **Récupérer le fichier IQ** produit par le logiciel d'acquisition.
-7. **Ingestion AeroLake** (voir §6) → MinIO → validation qualité → visualisation.
-8. **Post-traitement** (optionnel, hors AeroLake) : GR-Iridium Toolkit / outils
-   Doppler de Lucien pour SNR & dérive Doppler.
+5. **Record** the IQ for the chosen duration (e.g. 10–30 min).
+6. **Retrieve the IQ file** produced by the acquisition software.
+7. **AeroLake ingestion** (see §6) → MinIO → quality validation → visualisation.
+8. **Post-processing** (optional, outside AeroLake): GR-Iridium Toolkit /
+   Lucien's Doppler tools for SNR & Doppler drift.
 
-## 6. Intégration AeroLake (là où NOTRE travail entre)
+## 6. AeroLake integration (where OUR work comes in)
 
-Le RFSoC capte avec **son propre logiciel** (pas notre GNU Radio). AeroLake
-prend le relais **dès que le fichier IQ existe** :
+The RFSoC records with **its own software** (not our GNU Radio). AeroLake takes
+over **as soon as the IQ file exists**:
 
 ```bash
-# 1. Ingestion : fichier IQ -> SigMF -> MinIO (multipart) avec tags
-uv run aerolake-ingest <fichier.iq> \
+# 1. Ingestion: IQ file -> SigMF -> MinIO (multipart) with tags
+uv run aerolake-ingest <file.iq> \
     --signal-type iridium --sample-rate 400e3 --center-freq 1626.271e6 \
-    --hardware rfsoc --datatype <cf32|cs16|cu8>     # selon la sortie du logiciel
+    --hardware rfsoc --datatype <cf32|cs16|cu8>     # depending on the software's output
 
-# 2. Validation qualité + promotion du tag
-uv run aerolake-validate --prefix iridium/ --expected-duration <durée_s>
+# 2. Quality validation + tag promotion
+uv run aerolake-validate --prefix iridium/ --expected-duration <duration_s>
 
-# 3. Visualisation du spectre/spectrogramme/constellation
+# 3. Spectrum / spectrogram / constellation visualisation
 uv run --group gui aerolake-gui
 ```
 
-> ❓ **À confirmer** : le **format de sortie** du logiciel d'acquisition RFSoC
-> (cf32 ? cs16 ? cu8 ?) — ça détermine le `--datatype` de l'ingestion. Notre
-> ingest convertit tout en cf32 normalisé.
+> ❓ **To confirm**: the **output format** of the RFSoC acquisition software
+> (cf32? cs16? cu8?) — it determines the `--datatype` of the ingestion. Our
+> ingest converts everything to normalised cf32.
 
-## 7. Questions à clarifier avant le test
+## 7. Questions to clarify before the test
 
-1. **Régime** : statique rooftop (RFSoC, bande étroite Ch 7 @ 400 kHz, ce doc)
-   ou dynamique (BladeRF, large bande 10 MS/s @ 1622 MHz) ?
-2. **Format de sortie** du logiciel d'acquisition RFSoC (pour `--datatype`).
-3. **Référence 10 MHz** disponible (générateur ou OCXO CTI) ?
-4. **Antenne** Iridium-AT1621-12 disponible + accès toit ?
-5. Qui pilote le logiciel d'acquisition RFSoC (Mohamed Same) — dispo le jour J ?
+1. **Regime**: static rooftop (RFSoC, narrowband Ch 7 @ 400 kHz, this document)
+   or dynamic (BladeRF, wideband 10 MS/s @ 1622 MHz)?
+2. **Output format** of the RFSoC acquisition software (for `--datatype`).
+3. **10 MHz reference** available (generator or CTI OCXO)?
+4. **Antenna** Iridium-AT1621-12 available + roof access?
+5. Who drives the RFSoC acquisition software (Mohamed Same) — available on the
+   day?
 
-## Références
+## References
 
 - *Technical Report* — Lucien Millet, §2-1 (Data Acquisition), §2-1.2.1 (RFSoC
-  wrapper / horloge), §4-3.3 (Iridium Analysis).
-- Attributs HDF5 Wissem (`Test Setup Materials`, `Recording Materials`).
+  wrapper / clock), §4-3.3 (Iridium Analysis).
+- Wissem's HDF5 attributes (`Test Setup Materials`, `Recording Materials`).

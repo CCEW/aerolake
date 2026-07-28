@@ -1,34 +1,34 @@
 # AeroLake
 
-Pipeline Python end-to-end pour l'enregistrement, le stockage et l'extraction d'environnements RF — projet LASSENA.
+End-to-end Python pipeline for recording, storing and extracting RF environments — a LASSENA project.
 
-AeroLake capture des signaux radiofréquences, les stocke au format SigMF dans un data lakehouse MinIO (avec métadonnées et tags natifs pour la recherche), puis les ré-expose via un bus ZeroMQ Pub/Sub. L'objectif central : que n'importe quel membre du laboratoire puisse retrouver et rejouer n'importe quelle capture grâce à des métadonnées standardisées.
+AeroLake captures radio-frequency signals, stores them in the SigMF format inside a MinIO data lakehouse (with native metadata and tags for discovery), then serves them back over a ZeroMQ Pub/Sub bus. The core goal: any member of the laboratory can find and replay any capture, thanks to standardised metadata.
 
-## Périmètre
+## Scope
 
-Ce dépôt suit le mandat du projet (docs/LASSENA-Project_AeroLake.pdf) : un pipeline RX (réception) en quatre sprints.
+This repository follows the project mandate (docs/LASSENA-Project_AeroLake.pdf): an RX (receive) pipeline in four sprints.
 
     Producer (capture -> SigMF)  ->  MinIO (lakehouse)  ->  Consumer (extraction -> ZeroMQ)
 
-- Producer — génère/encode des échantillons IQ au format SigMF et les pousse dans MinIO (multipart upload).
-- Lakehouse — MinIO (S3-compatible) : stockage des .sigmf-data + .sigmf-meta, avec métadonnées d'objet (x-amz-meta-*) et tags pour la découverte rapide et le cycle de vie.
-- Consumer — relit les captures par HTTP Range Requests et les publie sur un bus ZeroMQ Pub/Sub, prêt à alimenter décodeurs logiciels ou, en phase future, un émetteur SDR.
+- Producer — generates/encodes IQ samples in the SigMF format and pushes them to MinIO (multipart upload).
+- Lakehouse — MinIO (S3-compatible): stores the .sigmf-data + .sigmf-meta pair, with object metadata (x-amz-meta-*) and tags for fast discovery and lifecycle.
+- Consumer — reads captures back through HTTP Range Requests and publishes them on a ZeroMQ Pub/Sub bus, ready to feed software decoders or, in a future phase, an SDR transmitter.
 
-### Hors-périmètre (phases futures, archivé)
+### Out of scope (future phases, archived)
 
-Les composants suivants ont été développés puis archivés pour recentrer le projet sur le mandat. Ils sont préservés intégralement sur la branche archive/explorations-v1 et restent récupérables :
+The following components were built and then archived to refocus the project on the mandate. They are preserved in full on the archive/explorations-v1 branch and remain recoverable:
 
-- Ancienne interface de *visualisation* Streamlit/Plotly (ADR-006) — à ne pas confondre avec la **nouvelle interface web de capture/playback**, qui fait partie du dépôt (voir « Interface web » ci-dessous)
-- Module d'analyse de données décodées .h5 — Doppler/IMU/GPS (ADR-011)
-- Émission RF / TX — flowgraph BladeRF + pont MinIO->fichier (ADR-012)
-- Évolution analytique Parquet / Apache Iceberg
+- The former Streamlit/Plotly *visualisation* interface (ADR-006) — not to be confused with the **new capture/playback web interface**, which is part of this repository (see "Web interface" below)
+- Decoded .h5 data analysis module — Doppler/IMU/GPS (ADR-011)
+- RF transmission / TX — BladeRF flowgraph + MinIO->file bridge (ADR-012)
+- Parquet / Apache Iceberg analytical evolution
 
-Voir ADR-013 pour le détail de ce recadrage.
+See ADR-013 for the details of that refocus.
 
-## Prérequis
+## Requirements
 
-- WSL2 + Ubuntu 22.04+ (Windows) ou Linux natif / macOS
-- Docker Desktop avec intégration WSL2
+- WSL2 + Ubuntu 22.04+ (Windows) or native Linux / macOS
+- Docker Desktop with WSL2 integration
 - Python 3.12+ via uv (https://github.com/astral-sh/uv)
 - Git
 
@@ -40,66 +40,76 @@ Voir ADR-013 pour le détail de ce recadrage.
     uv sync
     cd docker && docker compose up -d
 
-## Commandes principales
+## Main commands
 
     uv run aerolake-healthcheck
-    uv run aerolake-capture --config examples/capture.example.toml   # TOML (recommandé) ou JSON
+    uv run aerolake-capture --config examples/capture.example.toml   # TOML (recommended) or JSON
     uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6
     uv run aerolake-list --signal-type gnss_l1
-    uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campagne" --description "..."
+    uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campaign" --description "..."
     uv run aerolake-play --prefix gnss_l1/
     uv run aerolake-stream --prefix gnss_l1/
     uv run aerolake-subscribe --address tcp://localhost:5555
 
-Les fichiers de config de capture sont en **TOML (recommandé — commentaires
-autorisés) ou JSON**, choisis par l'extension ; modèles commentés dans
-`examples/` (voir `examples/README.md`).
+Capture config files are written in **TOML (recommended — comments allowed) or
+JSON**, selected by the file extension; commented templates live in
+`examples/` (see `examples/README.md`).
 
-## Interface web (GUI)
+## Web interface (GUI)
 
-Une interface Streamlit pour capturer et rejouer **sans terminal** (extra
-optionnel, hors installation de base) :
+A Streamlit interface to capture and replay **without a terminal** (optional
+extra, not part of the base install):
 
     uv sync --extra gui
-    uv run aerolake-gui        # sert sur le réseau (0.0.0.0:8501)
+    uv run aerolake-gui        # serves on the network (0.0.0.0:8501)
 
-Deux onglets : **Capture** (déposer une config TOML/JSON, pointer l'antenne sur
-une carte, capturer, revoir le spectre, pousser dans MinIO / garder / jeter) et
-**Playback** (parcourir le lakehouse, visualiser le spectre de n'importe quelle
-fenêtre via HTTP Range, commande ZeroMQ prête, export SigMF pour GNU Radio).
+Two tabs: **Capture** (drop a TOML/JSON config, point the antenna on a map,
+capture, review the spectrum, push to MinIO / keep / discard) and **Playback**
+(browse the lakehouse, view the spectrum of any time window through HTTP Range,
+ready-to-run ZeroMQ command, SigMF export for GNU Radio).
 
-**Sans terminal (Windows + WSL)** : double-cliquer **`launch-gui.vbs`** — démarre
-le GUI en arrière-plan (aucune fenêtre) et ouvre le navigateur. Pour un
-démarrage automatique au boot du poste : mettre un raccourci vers
-`launch-gui.vbs` dans le dossier `shell:startup` (Win+R → `shell:startup`).
+**No terminal (Windows + WSL)**: double-click **`launch-gui.vbs`** — it starts
+the GUI in the background (no window) and opens the browser. To start it
+automatically when the station boots: put a shortcut to `launch-gui.vbs` in the
+`shell:startup` folder (Win+R → `shell:startup`).
 
-## Qualité / tests
+## Quality / tests
 
     uv run ruff check .
     uv run ruff format .
     uv run mypy src
     uv run pytest
 
-Un test d'intégration optionnel (tests/integration/) s'exécute contre un vrai MinIO : AEROLAKE_RUN_INTEGRATION=1 uv run pytest -m integration
+An optional integration test (tests/integration/) runs against a real MinIO: AEROLAKE_RUN_INTEGRATION=1 uv run pytest -m integration
 
-## Structure du projet
+## Project layout
 
     aerolake/
     ├── src/aerolake/
-    │   ├── common/     Configuration, storage (chokepoint S3), logging
+    │   ├── common/     Configuration, storage (S3 chokepoint), logging
     │   ├── producer/   Capture/ingestion -> SigMF -> MinIO
-    │   ├── consumer/   Extraction MinIO (HTTP Range) -> ZeroMQ
-    │   ├── gui/        Interface web Streamlit (extra optionnel [gui])
-    │   └── scripts/    Points d'entrée CLI
-    ├── tests/          Tests pytest (moto)
-    ├── docker/         MinIO local (docker-compose)
-    ├── gnuradio/       Flowgraphs Record / Playback
-    └── docs/           Documentation et ADR
+    │   ├── consumer/   MinIO extraction (HTTP Range) -> ZeroMQ
+    │   ├── gui/        Streamlit web interface (optional [gui] extra)
+    │   └── scripts/    CLI entry points
+    ├── tests/          pytest tests (moto)
+    ├── docker/         local MinIO (docker-compose)
+    ├── gnuradio/       Record / Playback flowgraphs
+    └── docs/           Documentation and ADRs
 
 ## Documentation
 
-Le dossier docs/adr/ contient les Architectural Decision Records — la trace des décisions de conception. ADR-013 documente le recadrage sur le mandat ; les ADR des composants archivés (006, 011, 012) y sont conservés et marqués comme tels.
+The docs/adr/ folder holds the Architectural Decision Records — the written trace of every design decision. ADR-013 documents the refocus on the mandate; the ADRs of archived components (006, 011, 012) are kept there and marked as such.
 
-## Auteur
+Start here:
+
+- **docs/handoff-document.md** — the complete handoff: concepts from zero, install, the whole code, the decisions and the roadmap. Start here if you are taking the project over.
+- **docs/code-map.md** — the whole codebase in one page.
+- **docs/user-manual.md** — daily use, no terminal needed.
+- **docs/code-documentation.md** — the class-by-class code reference.
+- **HANDOFF.md** — the operational cheat-sheet: set up a station, migrate the storage, transfer the repository.
+
+The whole repository — code, comments, documentation and ADRs — is written in English.
+
+## Author
 
 Théo Schmitt — LASSENA

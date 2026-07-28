@@ -1,73 +1,73 @@
-# Runbook — Test banc : générateur de signal → SDR → lakehouse
+# Runbook — Bench test: signal generator → SDR → lakehouse
 
-Objectif : capturer un signal connu (générateur CW) avec un **RTL-SDR** ou un
-**BladeRF**, décrit par un **fichier de config JSON**, et le ranger dans le
-lakehouse MinIO au format SigMF.
+Goal: capture a known signal (CW generator) with an **RTL-SDR** or a
+**BladeRF**, described by a **config file**, and store it in the MinIO
+lakehouse in the SigMF format.
 
 ---
 
-## Méthode rapide (un seul appel)
+## Quick method (a single call)
 
-Une fois le matériel branché (voir §2) et ton JSON prêt (voir §3) :
+Once the hardware is connected (see §2) and your config is ready (see §3):
 
 ```bash
 cd ~/code/lassena/aerolake
-./acquire.sh examples/test-rtlsdr.json      # ou ton propre fichier de config
+./acquire.sh examples/test-rtlsdr.json      # or your own config file
 ```
 
-`acquire.sh` enchaîne tout : pont SoapySDR → MinIO → healthcheck → capture.
-Tu n'as plus qu'à répondre **y** à « Push this capture to MinIO? ».
+`acquire.sh` chains everything: SoapySDR bridge → MinIO → healthcheck →
+capture. All you have to do is answer **y** to "Push this capture to MinIO?".
 
-> Les sections ci-dessous détaillent chaque étape (utile pour comprendre ou
-> dépanner). Si `acquire.sh` marche, tu peux sauter directement à la §4 (vérif).
+> The sections below detail every step (useful to understand or troubleshoot).
+> If `acquire.sh` works, you can jump straight to §4 (verification).
 
 ---
 
-## 1. Prérequis logiciels (ce que fait `acquire.sh`)
+## 1. Software requirements (what `acquire.sh` does)
 
 ```bash
 cd ~/code/lassena/aerolake
-bash setup-soapy.sh                  # pont SoapySDR (À RELANCER après chaque `uv sync`)
-cd docker && docker compose up -d && cd ..   # MinIO (le lakehouse)
-uv run aerolake-healthcheck          # doit être vert
-SoapySDRUtil --find                  # doit lister ton SDR une fois branché
+bash setup-soapy.sh                  # SoapySDR bridge (RERUN after every `uv sync`)
+cd docker && docker compose up -d && cd ..   # MinIO (the lakehouse)
+uv run aerolake-healthcheck          # must be green
+SoapySDRUtil --find                  # must list your SDR once connected
 ```
 
 ---
 
-## 2. Montage matériel
+## 2. Hardware setup
 
-1. **Câble coaxial** : sortie du générateur → entrée **RX** du SDR (SMA).
-   - RTL-SDR : le port antenne.  BladeRF : port **RX1** (ou **RX**).
-2. (!) **PUISSANCE — pour ne rien griller** :
-   - Commence **TRÈS BAS** : **−40 dBm** (voire moins).
-   - **Ne dépasse jamais ~−10 dBm** sur un RTL-SDR.
-   - Tu **monteras** ensuite, petit à petit, jusqu'à voir la tonalité.
-3. **Fréquence** : RTL-SDR 24 MHz → 1.7 GHz · BladeRF 47 MHz → 6 GHz.
-4. (!) **Décalage (offset)** : règle le générateur **~250 kHz AU-DESSUS** du
-   `center_freq` de la config. Le SDR a un pic parasite pile au centre (« DC
-   spike ») ; en décalant, ta tonalité apparaît à **+250 kHz**, bien visible.
+1. **Coaxial cable**: generator output → SDR **RX** input (SMA).
+   - RTL-SDR: the antenna port.  BladeRF: port **RX1** (or **RX**).
+2. (!) **POWER — so you don't fry anything**:
+   - Start **VERY LOW**: **−40 dBm** (or lower).
+   - **Never exceed ~−10 dBm** on an RTL-SDR.
+   - You will then raise it, little by little, until the tone appears.
+3. **Frequency**: RTL-SDR 24 MHz → 1.7 GHz · BladeRF 47 MHz → 6 GHz.
+4. (!) **Offset**: set the generator **~250 kHz ABOVE** the config's
+   `center_freq`. The SDR has a spurious peak exactly at the centre (the "DC
+   spike"); by offsetting, your tone appears at **+250 kHz**, clearly visible.
 
 ---
 
-## 3. Le fichier de config JSON
+## 3. The config file
 
-### Où le mettre ?
-**N'importe où** — tu passes simplement son **chemin** en argument :
+### Where to put it?
+**Anywhere** — you simply pass its **path** as an argument:
 ```bash
-./acquire.sh chemin/vers/ma-config.json
+./acquire.sh path/to/my-config.json
 ```
-Le plus simple : le ranger dans **`examples/`** (à côté des modèles). Deux
-configs sont **déjà prêtes**, tu peux juste les éditer :
+The simplest: keep it in **`examples/`** (next to the templates). Two configs
+are **ready to use**, you can just edit them:
 - `examples/test-rtlsdr.json`
 - `examples/test-bladerf.json`
 
-Ou crée le tien, ex. `examples/mon-test.json`, puis
-`./acquire.sh examples/mon-test.json`.
+Or create your own, e.g. `examples/my-test.json`, then
+`./acquire.sh examples/my-test.json`.
 
-### Comment le remplir ?
+### How to fill it in?
 
-**Minimal** (le strict nécessaire pour un vrai SDR) :
+**Minimal** (the strict minimum for a real SDR):
 ```json
 {
   "signal_type": "test_banc",
@@ -78,7 +78,7 @@ Ou crée le tien, ex. `examples/mon-test.json`, puis
 }
 ```
 
-**Complet** (un maximum de métadonnées) :
+**Complete** (as much metadata as possible):
 ```json
 {
   "signal_type": "gnss_l1",
@@ -90,86 +90,86 @@ Ou crée le tien, ex. `examples/mon-test.json`, puis
   "source": { "type": "soapy", "driver": "bladerf", "agc": false, "antenna": "RX1" },
 
   "author": "Theo Schmitt",
-  "description": "Capture banc GNSS L1",
+  "description": "GNSS L1 bench capture",
   "license": "https://creativecommons.org/licenses/by-sa/4.0/",
   "operator": "schmitt",
 
   "location": {
-    "name": "labo LASSENA",
+    "name": "LASSENA lab",
     "mobile": false,
     "geolocation": { "latitude": 45.4946, "longitude": -73.5623, "altitude": 50.0 }
   },
 
   "annotation": {
-    "label": "porteuse",
-    "comment": "tonalite du generateur",
+    "label": "carrier",
+    "comment": "generator tone",
     "freq_lower_edge": 1575320000,
     "freq_upper_edge": 1575520000
   },
 
-  "antenna": { "model": "Tallysman TW3742", "type": "patch actif", "gain": 28.0 }
+  "antenna": { "model": "Tallysman TW3742", "type": "active patch", "gain": 28.0 }
 }
 ```
 
-### Les champs
+### The fields
 
-| Champ | Sens |
+| Field | Meaning |
 |---|---|
-| `signal_type` *(requis)* | identifiant court → dossier MinIO + tag (`gnss_l1`, `test_banc`…) |
-| `center_freq` *(requis)* | fréquence centrale en Hz (= fréquence générateur − 250 000) |
-| `sample_rate` *(requis)* | échantillonnage en Hz (2000000 = 2 MS/s, OK RTL-SDR et BladeRF) |
-| `duration_s` *(requis)* | durée en secondes (garde court : 2 s) |
-| `source.type` | `"soapy"` (vrai SDR) ou `"synthetic"` (test sans matériel) |
-| `source.driver` | `rtlsdr` ou `bladerf` |
-| `source.agc` | `true` = gain auto · `false` = gain fixe |
-| `source.antenna` | port (BladeRF `RX1`) — optionnel, à enlever si erreur |
-| `author` / `description` / `license` / `operator` | métadonnées descriptives |
-| `location.name` / `mobile` | lieu (devient un tag) · mobile ? |
-| `location.geolocation` | `latitude` / `longitude` / `altitude` — **ou** `"gps": true` (lit gpsd) |
-| `annotation` | `label`, `comment`, `freq_lower_edge` + `freq_upper_edge` (les deux ensemble) |
-| `antenna` | `model` (requis si le bloc est présent), `type`, `gain`, `polarization`… |
+| `signal_type` *(required)* | short identifier → MinIO folder + tag (`gnss_l1`, `test_banc`…) |
+| `center_freq` *(required)* | centre frequency in Hz (= generator frequency − 250,000) |
+| `sample_rate` *(required)* | sample rate in Hz (2000000 = 2 MS/s, fine for RTL-SDR and BladeRF) |
+| `duration_s` *(required)* | duration in seconds (keep it short: 2 s) |
+| `source.type` | `"soapy"` (real SDR) or `"synthetic"` (test without hardware) |
+| `source.driver` | `rtlsdr` or `bladerf` |
+| `source.agc` | `true` = automatic gain · `false` = fixed gain |
+| `source.antenna` | port (BladeRF `RX1`) — optional, remove it if it errors |
+| `author` / `description` / `license` / `operator` | descriptive metadata |
+| `location.name` / `mobile` | place (becomes a tag) · moving? |
+| `location.geolocation` | `latitude` / `longitude` / `altitude` — **or** `"gps": true` (reads gpsd) |
+| `annotation` | `label`, `comment`, `freq_lower_edge` + `freq_upper_edge` (both together) |
+| `antenna` | `model` (required if the block is present), `type`, `gain`, `polarization`… |
 
-> Règle stricte : un champ **inconnu = erreur** (anti-faute de frappe).
-> Référence exhaustive : `examples/capture.full.json` et `examples/README.md`.
+> Strict rule: an **unknown field is an error** (typo protection).
+> Exhaustive reference: `examples/capture.full.json` and `examples/README.md`.
 
-**Exemple de pairage fréquence** (RTL-SDR) : générateur à **100.25 MHz** →
-`center_freq: 100000000` (100.00 MHz) → la tonalité ressort à **+250 kHz**.
+**Frequency pairing example** (RTL-SDR): generator at **100.25 MHz** →
+`center_freq: 100000000` (100.00 MHz) → the tone shows up at **+250 kHz**.
 
 ---
 
-## 4. Lancer + vérifier
+## 4. Run + verify
 
 ```bash
-./acquire.sh examples/test-rtlsdr.json     # capture, puis répondre "y" pour pousser
-uv run aerolake-list --signal-type test_banc   # la capture apparaît ?
+./acquire.sh examples/test-rtlsdr.json     # capture, then answer "y" to push
+uv run aerolake-list --signal-type test_banc   # does the capture appear?
 ```
 
-(Les warnings `Avahi` / `RtApi` au démarrage = bruit SoapySDR, à ignorer.)
+(The `Avahi` / `RtApi` warnings at startup are SoapySDR noise; ignore them.)
 
-### Voir le contenu (optionnel)
+### Looking at the content (optional)
 
-`aerolake-list` confirme que la capture **existe** ; pour regarder le **spectre**
-(et confirmer que ta tonalité est bien là, au bon niveau), ouvre le
-`.sigmf-data` dans **GNU Radio** (`playback.grc`) ou dans **Inspectrum**.
+`aerolake-list` confirms the capture **exists**; to look at the **spectrum**
+(and confirm your tone is there, at the right level), open the `.sigmf-data`
+in **GNU Radio** (`playback.grc`) or in **Inspectrum**.
 
 ---
 
-## 5. Dépannage
+## 5. Troubleshooting
 
-| Symptôme | Cause / solution |
+| Symptom | Cause / fix |
 |---|---|
-| `No SDR found for driver=...` | Appareil pas branché, mauvais `driver`, ou droits USB. Vérifie `SoapySDRUtil --find`. Au besoin règles udev ou `sudo`. |
-| `ModuleNotFoundError: SoapySDR` | Relance `bash setup-soapy.sh` (le pont saute après un `uv sync`). |
-| Un seul pic pile au centre (0 kHz) | C'est le DC spike ; décale le générateur de +250 kHz. |
-| Niveau ~0 dBFS / écrêté | Baisse le niveau du générateur. |
-| Pas de pic / niveau très bas | Monte le générateur ; vérifie câble + fréquence + offset. |
-| MinIO injoignable | `cd docker && docker compose up -d` puis `uv run aerolake-healthcheck`. |
-| BladeRF : erreur sur l'antenne | Enlève le champ `"antenna"` de la config. |
+| `No SDR found for driver=...` | Device not connected, wrong `driver`, or USB permissions. Check `SoapySDRUtil --find`. Add udev rules or use `sudo` if needed. |
+| `ModuleNotFoundError: SoapySDR` | Rerun `bash setup-soapy.sh` (the bridge breaks after a `uv sync`). |
+| A single peak exactly at the centre (0 kHz) | That is the DC spike; offset the generator by +250 kHz. |
+| Level ~0 dBFS / clipped | Lower the generator level. |
+| No peak / very low level | Raise the generator; check cable + frequency + offset. |
+| MinIO unreachable | `cd docker && docker compose up -d` then `uv run aerolake-healthcheck`. |
+| BladeRF: antenna error | Remove the `"antenna"` field from the config. |
 
 ---
 
-## Limite connue (gain)
+## Known limitation (gain)
 
-La config n'expose pas le **gain** : c'est l'AGC si `"agc": true`, sinon un gain
-fixe de 40 dB. Pour un test au générateur, **le niveau du générateur est ton vrai
-bouton de réglage**.
+The config does not expose the **gain**: it is the AGC when `"agc": true`,
+otherwise a fixed 40 dB gain. For a generator test, **the generator's level is
+your real adjustment knob**.

@@ -1,6 +1,6 @@
 # ADR-012 — RF re-emission: BladeRF TX flowgraph + a MinIO→file fetch bridge
 
-> **Archivé — hors-périmètre phase 1 (voir ADR-013).** Ce composant a été retiré de `main` et préservé sur la branche `archive/explorations-v1`. Cet ADR est conservé comme trace de décision.
+> **Archived — out of phase-1 scope (see ADR-013).** This component was removed from `main` and preserved on the `archive/explorations-v1` branch. This ADR is kept as a record of the decision.
 
 - **Status:** Accepted
 - **Date:** 2026-06-03
