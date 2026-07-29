@@ -61,15 +61,15 @@ def render_spectrum_png(
     # Top: power spectral density — "which frequencies are present, how strong".
     ax_psd.psd(x[:n_psd], NFFT=4096, Fs=sample_rate)
     ax_psd.set_title(
-        f"Spectre (PSD) — centre {center_freq / 1e6:.3f} MHz, {sample_rate / 1e6:.3f} MS/s"
+        f"Spectrum (PSD) — center {center_freq / 1e6:.3f} MHz, {sample_rate / 1e6:.3f} MS/s"
     )
-    ax_psd.set_xlabel("Fréquence relative au centre (Hz)")
+    ax_psd.set_xlabel("Frequency relative to center (Hz)")
 
     # Bottom: spectrogram / waterfall — frequency over time.
     ax_spec.specgram(x[:n_spec], NFFT=2048, Fs=sample_rate)
-    ax_spec.set_title("Spectrogramme (waterfall)")
-    ax_spec.set_xlabel("Temps (s)")
-    ax_spec.set_ylabel("Fréquence relative au centre (Hz)")
+    ax_spec.set_title("Spectrogram (waterfall)")
+    ax_spec.set_xlabel("Time (s)")
+    ax_spec.set_ylabel("Frequency relative to center (Hz)")
 
     fig.tight_layout()
     buffer = io.BytesIO()
