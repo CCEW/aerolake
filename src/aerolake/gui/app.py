@@ -456,7 +456,7 @@ def _render_result(prepared: PreparedCapture) -> None:
     st.markdown("**What do you want to do with this capture?**")
     a, b, c = st.columns(3)
 
-    if a.button("⬆  Pousser dans MinIO", type="primary", use_container_width=True):
+    if a.button("⬆  Push to MinIO", type="primary", use_container_width=True):
         try:
             with st.spinner("Uploading to MinIO…"):
                 result = push_capture(prepared, with_preview=True)
@@ -468,7 +468,7 @@ def _render_result(prepared: PreparedCapture) -> None:
         except Exception as exc:
             st.error(f"Unexpected error: {exc}")
 
-    if b.button("💾  Garder en local", use_container_width=True):
+    if b.button("💾  Keep locally", use_container_width=True):
         try:
             out_dir = save_capture_locally(prepared)
             st.session_state.prepared = None
@@ -476,7 +476,7 @@ def _render_result(prepared: PreparedCapture) -> None:
         except OSError as exc:
             st.error(f"Could not save locally: {exc}")
 
-    if c.button("🗑  Jeter", use_container_width=True):
+    if c.button("🗑  Discard", use_container_width=True):
         st.session_state.prepared = None
         st.info("Capture discarded — nothing was stored.")
 
