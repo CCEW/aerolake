@@ -117,6 +117,22 @@ def test_upload_bytes_stores_metadata(storage_client) -> None:
     assert fetched["session-id"] == "abc12345"
 
 
+def test_get_object_metadata_normalizes_keys_to_lowercase(storage_client) -> None:
+    """Some S3-compatible backends preserve user metadata case on HEAD."""
+    storage_client.upload_bytes(
+        "with_mixed_case_meta.txt",
+        b"hello",
+        metadata={"Sample-Rate": "2000000", "Center-Freq": "1575420000"},
+    )
+
+    fetched = storage_client.get_object_metadata("with_mixed_case_meta.txt")
+
+    assert fetched["sample-rate"] == "2000000"
+    assert fetched["center-freq"] == "1575420000"
+    assert "Sample-Rate" not in fetched
+    assert "Center-Freq" not in fetched
+
+
 def test_upload_bytes_stores_tags(storage_client) -> None:
     """Tags passed to upload_bytes are retrievable via get_object_tagging."""
     storage_client.upload_bytes(

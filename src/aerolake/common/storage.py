@@ -144,9 +144,10 @@ class StorageClient:
             response = self._client.head_object(Bucket=self.bucket, Key=key)
         except ClientError as exc:
             raise StorageError(f"head_object failed for {key!r}") from exc
-        # boto3 normalizes 'x-amz-meta-foo' headers into the 'Metadata' dict
-        # with lowercase keys and the prefix stripped.
-        return dict(response.get("Metadata", {}))
+        # S3-compatible backends are not perfectly consistent about metadata
+        # key casing. Normalize here so consumers can always use lower-case
+        # x-amz-meta-* names such as "sample-rate" and "center-freq".
+        return {str(k).lower(): str(v) for k, v in response.get("Metadata", {}).items()}
 
     def get_object_tags(self, key: str) -> dict[str, str]:
         """Return the S3 object tags as a dict."""
