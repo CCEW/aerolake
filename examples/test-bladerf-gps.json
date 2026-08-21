@@ -6,5 +6,6 @@
   "source": { "type": "soapy", "driver": "bladerf", "agc": false },
   "operator": "camila",
   "description": "Test banc BladeRF : generateur CW",
-  "location": { "name": "labo LASSENA", "mobile": false }
+  "location": { "name": "lab LASSENA", "mobile": false },
+  "author": "Camila NF <camila.nino-francia@lassena.etsmtl.ca>"
 }

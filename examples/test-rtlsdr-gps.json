@@ -2,9 +2,10 @@
   "signal_type": "test_banc",
   "center_freq": 1575420000,
   "sample_rate": 2048000,
-  "duration_s": 120.0,
+  "duration_s": 60.0,
   "source": { "type": "soapy", "driver": "rtlsdr", "agc": false },
   "operator": "camila",
   "description": "Test banc RTL-SDR : generateur CW",
-  "location": { "name": "labo LASSENA", "mobile": false }
+  "location": { "name": "lab LASSENA", "mobile": false },
+  "author": "Camila NF <camila.nino-francia@lassena.etsmtl.ca>"
 }
