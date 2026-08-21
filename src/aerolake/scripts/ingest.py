@@ -73,11 +73,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--center-freq", type=float, required=True, help="Center frequency in Hz.")
     parser.add_argument(
         "--datatype",
-        choices=["cf32", "cu8", "cs16", "cs32"],
+        choices=["cf32", "cu8", "cs16", "ci16_le", "cs32"],
         default="cf32",
-        help="Source datatype (default cf32; cu8/cs16/cs32 are converted to cf32).",
+        help="Source datatype (default cf32; integer IQ datatypes are converted to cf32).",
     )
     parser.add_argument("--hardware", default="unknown", help="Hardware tag (e.g. bladerf, rfsoc).")
+    parser.add_argument(
+        "--iqengine",
+        nargs="?",
+        const="reuse",
+        choices=["reuse", "redo"],
+        help="Upload IQEngine artifacts beside the SigMF pair. With no value, reuse "
+        "local .jpg/.preview.jpg/.minimap if present and generate missing files. "
+        "Use '--iqengine redo' to regenerate local sidecars before upload.",
+    )
     return parser
 
 
@@ -92,6 +101,7 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
     if not files:
         console.print(f"[bold red]✗ No file(s) found at:[/] {args.path}")
         return 2
+
 
     what = files[0] if len(files) == 1 else f"{len(files)} files in {args.path}"
     console.print(
@@ -108,6 +118,7 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
             center_freq=args.center_freq,
             datatype=args.datatype,
             hardware=args.hardware,
+            iqengine=args.iqengine,
             storage_client=storage_client,
         )
     except StorageError as exc:
@@ -127,6 +138,8 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
     table.add_row("Session ID", result.session_id)
     table.add_row("Data key", result.data_key)
     table.add_row("Meta key", result.meta_key)
+    if result.sidecar_keys:
+        table.add_row("Sidecars", "\n".join(result.sidecar_keys))
     table.add_row("Samples", f"{result.sample_count:,}")
     table.add_row(
         "Uploaded",

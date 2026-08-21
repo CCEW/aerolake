@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 
 import numpy as np
 import pytest
@@ -18,6 +19,7 @@ from aerolake.common.storage import StorageClient
 from aerolake.consumer.reader import CaptureReader
 from aerolake.producer.ingest import ingest_file, ingest_files
 from aerolake.scripts.ingest import _resolve_files, main
+from aerolake.scripts.iqengine_artifacts import generate_artifacts
 
 
 def test_ingest_cf32_file_roundtrips(storage_client: StorageClient, tmp_path) -> None:
@@ -80,6 +82,33 @@ def test_ingest_cu8_is_converted_to_normalised_cf32(
     assert abs(content.samples[1]) < 0.02
 
 
+def test_ingest_ci16_le_is_converted_to_normalised_cf32(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    # SigMF ci16_le spelling: signed int16 little-endian interleaved I,Q.
+    raw = np.array([32767, -32768, 0, 16384], dtype="<i2")  # 2 complex samples
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(raw.tobytes())
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="gnss_l1",
+        sample_rate=2_000_000,
+        center_freq=1_575_420_000,
+        datatype="ci16_le",
+        hardware="bladerf",
+        storage_client=storage_client,
+    )
+
+    assert result.sample_count == 2
+    content = CaptureReader(storage_client).read(result.data_key)
+    assert content.samples.dtype == np.complex64
+    assert content.samples[0].real == pytest.approx(32767 / 32768)
+    assert content.samples[0].imag == pytest.approx(-1.0)
+    assert content.samples[1].real == pytest.approx(0.0)
+    assert content.samples[1].imag == pytest.approx(0.5)
+
+
 def test_ingest_meta_uploaded_before_data_is_complete(
     storage_client: StorageClient, tmp_path
 ) -> None:
@@ -100,6 +129,136 @@ def test_ingest_meta_uploaded_before_data_is_complete(
     # The meta is valid JSON with the expected fields.
     meta = json.loads(storage_client.download_bytes(result.meta_key))
     assert meta["captures"][0]["core:frequency"] == 1_575_420_000.0
+
+
+def test_ingest_uses_human_readable_datetime_hardware_folder(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.zeros(16, dtype=np.complex64).tobytes())
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="iridium",
+        sample_rate=2_000_000,
+        center_freq=1_622_000_000,
+        hardware="blade rf",
+        storage_client=storage_client,
+    )
+
+    pattern = (
+        r"^iridium/\d{4}-\d{2}-\d{2}/"
+        r"\d{4}-\d{2}-\d{2}_\d{2}h\d{2}m\d{2}_blade_rf_"
+        rf"{result.session_id}/capture\.sigmf-data$"
+    )
+    assert re.match(pattern, result.data_key)
+
+
+def test_ingest_generates_iqengine_artifacts_next_to_sigmf_pair(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.exp(1j * np.linspace(0, 8 * np.pi, 4096)).astype(np.complex64).tobytes())
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="gnss_l1",
+        sample_rate=2_000_000,
+        center_freq=1_575_420_000,
+        iqengine=True,
+        storage_client=storage_client,
+    )
+
+    base_key = result.data_key[: -len(".sigmf-data")]
+    assert result.sidecar_keys == (
+        f"{base_key}.jpg",
+        f"{base_key}.preview.jpg",
+        f"{base_key}.minimap",
+    )
+    assert storage_client.download_bytes(result.sidecar_keys[0])[:2] == b"\xff\xd8"
+    assert storage_client.download_bytes(result.sidecar_keys[1])[:2] == b"\xff\xd8"
+    assert len(storage_client.download_bytes(result.sidecar_keys[2])) == 102_400
+    assert storage_client.get_object_metadata(result.sidecar_keys[0])["role"] == (
+        "iqengine-artifact"
+    )
+    assert path.with_suffix(".jpg").exists()
+    assert path.with_suffix(".preview.jpg").exists()
+    assert path.with_suffix(".minimap").exists()
+
+
+def test_ingest_reuses_existing_iqengine_sidecars(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.exp(1j * np.linspace(0, 8 * np.pi, 4096)).astype(np.complex64).tobytes())
+    path.with_suffix(".jpg").write_bytes(b"existing-iqengine-jpg")
+    path.with_suffix(".preview.jpg").write_bytes(b"existing-preview-jpg")
+    path.with_suffix(".minimap").write_bytes(b"existing-minimap")
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="gnss_l1",
+        sample_rate=2_000_000,
+        center_freq=1_575_420_000,
+        iqengine=True,
+        storage_client=storage_client,
+    )
+
+    assert storage_client.download_bytes(result.sidecar_keys[0]) == b"existing-iqengine-jpg"
+    assert storage_client.download_bytes(result.sidecar_keys[1]) == b"existing-preview-jpg"
+    assert storage_client.download_bytes(result.sidecar_keys[2]) == b"existing-minimap"
+
+
+def test_ingest_iqengine_redo_regenerates_existing_sidecars(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.exp(1j * np.linspace(0, 8 * np.pi, 4096)).astype(np.complex64).tobytes())
+    path.with_suffix(".jpg").write_bytes(b"stale-iqengine-jpg")
+    path.with_suffix(".preview.jpg").write_bytes(b"stale-preview-jpg")
+    path.with_suffix(".minimap").write_bytes(b"stale-minimap")
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="gnss_l1",
+        sample_rate=2_000_000,
+        center_freq=1_575_420_000,
+        iqengine="redo",
+        storage_client=storage_client,
+    )
+
+    assert storage_client.download_bytes(result.sidecar_keys[0])[:2] == b"\xff\xd8"
+    assert storage_client.download_bytes(result.sidecar_keys[1])[:2] == b"\xff\xd8"
+    assert len(storage_client.download_bytes(result.sidecar_keys[2])) == 102_400
+    assert path.with_suffix(".jpg").read_bytes()[:2] == b"\xff\xd8"
+    assert path.with_suffix(".preview.jpg").read_bytes()[:2] == b"\xff\xd8"
+    assert path.with_suffix(".minimap").stat().st_size == 102_400
+
+
+def test_iqengine_artifact_command_preserves_existing_jpeg_as_preview(tmp_path) -> None:
+    base = tmp_path / "capture"
+    samples = np.exp(1j * np.linspace(0, 8 * np.pi, 4096)).astype(np.complex64)
+    base.with_suffix(".sigmf-data").write_bytes(samples.tobytes())
+    base.with_suffix(".sigmf-meta").write_text(
+        json.dumps(
+            {
+                "global": {
+                    "core:datatype": "cf32",
+                    "core:sample_rate": 2_000_000,
+                },
+                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
+                "annotations": [],
+            }
+        )
+    )
+    old_jpeg = b"old-aerolake-preview"
+    base.with_suffix(".jpg").write_bytes(old_jpeg)
+
+    jpg_path, preview_path, minimap_path = generate_artifacts(base)
+
+    assert jpg_path.read_bytes()[:2] == b"\xff\xd8"
+    assert preview_path.read_bytes() == old_jpeg
+    assert minimap_path.stat().st_size == 102_400
 
 
 # --- CLI -----------------------------------------------------------------
@@ -126,6 +285,89 @@ def test_ingest_cli_happy_path(storage_client: StorageClient, tmp_path, capsys) 
 
     assert code == 0
     assert "ingested" in capsys.readouterr().out.lower()
+
+
+def test_ingest_cli_generates_iqengine_artifacts(
+    storage_client: StorageClient, tmp_path, capsys
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.ones(4096, dtype=np.complex64).tobytes())
+
+    code = main(
+        [
+            str(path),
+            "--signal-type",
+            "gnss_l1",
+            "--sample-rate",
+            "2e6",
+            "--center-freq",
+            "1575.42e6",
+            "--iqengine",
+        ],
+        storage_client=storage_client,
+    )
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Sidecars" in out
+    assert "Uploaded" in out
+
+
+def test_ingest_cli_iqengine_creates_artifacts_without_local_sidecars(
+    storage_client: StorageClient, tmp_path, capsys
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.ones(4096, dtype=np.complex64).tobytes())
+    assert not (tmp_path / "capture.jpg").exists()
+    assert not (tmp_path / "capture.minimap").exists()
+
+    code = main(
+        [
+            str(path),
+            "--signal-type",
+            "gnss_l1",
+            "--sample-rate",
+            "2e6",
+            "--center-freq",
+            "1575.42e6",
+            "--iqengine",
+        ],
+        storage_client=storage_client,
+    )
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Sidecars" in out
+    assert "Uploaded" in out
+
+
+def test_ingest_cli_iqengine_redo_is_accepted(
+    storage_client: StorageClient, tmp_path, capsys
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.ones(4096, dtype=np.complex64).tobytes())
+
+    code = main(
+        [
+            str(path),
+            "--signal-type",
+            "gnss_l1",
+            "--sample-rate",
+            "2e6",
+            "--center-freq",
+            "1575.42e6",
+            "--iqengine",
+            "redo",
+        ],
+        storage_client=storage_client,
+    )
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Sidecars" in out
+    assert path.with_suffix(".jpg").exists()
+    assert path.with_suffix(".preview.jpg").exists()
+    assert path.with_suffix(".minimap").exists()
 
 
 def test_ingest_cli_missing_file_returns_two(storage_client: StorageClient) -> None:

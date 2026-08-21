@@ -27,23 +27,14 @@ _MAX_SAMPLES = 2_000_000
 _PSD_SAMPLES = 1 << 20  # 1,048,576 samples for the PSD (power-of-two = fast FFT)
 
 
-def render_spectrum_png(
+def _render_spectrum_image(
     samples: np.ndarray,
     sample_rate: float,
     center_freq: float,
+    *,
+    image_format: str,
 ) -> bytes:
-    """Return PNG bytes: a PSD (spectrum) on top, a spectrogram below.
-
-    Parameters
-    ----------
-    samples
-        Complex IQ samples (``np.complex64``). Only a leading slice is used.
-    sample_rate
-        Sample rate in Hz (sets the frequency/time axes).
-    center_freq
-        Center frequency in Hz (shown in the title; the axes stay relative to
-        it, i.e. 0 Hz on the plot = ``center_freq``).
-    """
+    """Return encoded image bytes: a PSD on top and a spectrogram below."""
     # Lazy import: matplotlib is heavy and only needed here. 'Agg' is the
     # headless backend (no screen) so this works on a server / in tests.
     import matplotlib
@@ -73,6 +64,35 @@ def render_spectrum_png(
 
     fig.tight_layout()
     buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=110)
+    fig.savefig(buffer, format=image_format, dpi=110)
     plt.close(fig)  # free the figure (matplotlib keeps them alive otherwise)
     return buffer.getvalue()
+
+
+def render_spectrum_png(
+    samples: np.ndarray,
+    sample_rate: float,
+    center_freq: float,
+) -> bytes:
+    """Return PNG bytes: a PSD (spectrum) on top, a spectrogram below.
+
+    Parameters
+    ----------
+    samples
+        Complex IQ samples (``np.complex64``). Only a leading slice is used.
+    sample_rate
+        Sample rate in Hz (sets the frequency/time axes).
+    center_freq
+        Center frequency in Hz (shown in the title; the axes stay relative to
+        it, i.e. 0 Hz on the plot = ``center_freq``).
+    """
+    return _render_spectrum_image(samples, sample_rate, center_freq, image_format="png")
+
+
+def render_spectrum_jpeg(
+    samples: np.ndarray,
+    sample_rate: float,
+    center_freq: float,
+) -> bytes:
+    """Return JPEG bytes for IQEngine-style capture preview storage."""
+    return _render_spectrum_image(samples, sample_rate, center_freq, image_format="jpg")

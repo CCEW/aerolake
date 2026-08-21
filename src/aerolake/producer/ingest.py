@@ -25,17 +25,25 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import structlog
 from sigmf import SigMFFile
 
 from aerolake.common.storage import StorageClient
+from aerolake.producer.iqengine import (
+    render_iqengine_minimap_from_files,
+    render_iqengine_thumbnail_jpeg_from_files,
+)
+from aerolake.producer.preview import render_spectrum_jpeg
 from aerolake.producer.sigmf_writer import SIGMF_VERSION
 
 logger = structlog.get_logger(__name__)
@@ -46,11 +54,19 @@ _SOURCE_DTYPES: dict[str, tuple[np.dtype, int]] = {
     "cf32": (np.dtype("<c8"), 8),  # complex float32 LE — already our target
     "cu8": (np.dtype("u1"), 2),  # unsigned 8-bit (RTL-SDR), I,Q interleaved
     "cs16": (np.dtype("<i2"), 4),  # signed 16-bit LE, I,Q interleaved
+    "ci16_le": (np.dtype("<i2"), 4),  # signed int16 LE, I,Q interleaved
     "cs32": (np.dtype("<i4"), 8),  # signed 32-bit LE (e.g. RFSoC), I,Q interleaved
 }
 
 # cf32 datatype string we store everywhere (SigMF spec).
 _TARGET_DATATYPE = "cf32_le"
+_IQENGINE_PREVIEW_SAMPLES = 2_000_000
+_LOCAL_TZ = ZoneInfo("America/Montreal")
+_IQENGINE_SIDECARS = (
+    (".jpg", "image/jpeg"),
+    (".preview.jpg", "image/jpeg"),
+    (".minimap", "application/octet-stream"),
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +76,7 @@ class IngestResult:
     session_id: str
     data_key: str
     meta_key: str
+    sidecar_keys: tuple[str, ...]
     sample_count: int
     bytes_uploaded: int
 
@@ -88,7 +105,7 @@ def _iter_cf32_chunks(file_path: str, datatype: str, chunk_samples: int) -> Iter
             if datatype == "cu8":
                 # 0..255, midpoint 127.5 -> map to roughly [-1, 1].
                 floats = (scalars.astype(np.float32) - 127.5) / 127.5
-            elif datatype == "cs16":
+            elif datatype in {"cs16", "ci16_le"}:
                 floats = scalars.astype(np.float32) / 32768.0  # 2**15
             else:  # cs32
                 floats = scalars.astype(np.float32) / 2147483648.0  # 2**31
@@ -104,6 +121,130 @@ def _iter_cf32_files(file_paths: list[str], datatype: str, chunk_samples: int) -
     """
     for path in file_paths:
         yield from _iter_cf32_chunks(path, datatype, chunk_samples)
+
+
+def _load_preview_samples(
+    file_paths: list[str],
+    datatype: str,
+    max_samples: int = _IQENGINE_PREVIEW_SAMPLES,
+) -> np.ndarray:
+    """Load a bounded cf32 preview slice from one or more source files."""
+    chunks: list[np.ndarray] = []
+    remaining = max_samples
+    for chunk in _iter_cf32_files(file_paths, datatype, chunk_samples=min(remaining, 1_000_000)):
+        samples = np.frombuffer(chunk, dtype="<c8")
+        if len(samples) > remaining:
+            samples = samples[:remaining]
+        chunks.append(samples)
+        remaining -= len(samples)
+        if remaining <= 0:
+            break
+    if not chunks:
+        return np.array([], dtype=np.complex64)
+    return np.concatenate(chunks).astype(np.complex64, copy=False)
+
+
+def _local_sidecar_base(file_paths: list[str]) -> Path | None:
+    """Return the local base path used for sidecar reuse, only for one input file."""
+    if len(file_paths) != 1:
+        return None
+    path = Path(file_paths[0])
+    for suffix in (".sigmf-data", ".sigmf-meta"):
+        if str(path).endswith(suffix):
+            return Path(str(path)[: -len(suffix)])
+    return path.with_suffix("")
+
+
+def _generate_iqengine_artifacts(
+    *,
+    file_paths: list[str],
+    datatype: str,
+    sample_rate: float,
+    center_freq: float,
+) -> dict[str, bytes]:
+    samples = _load_preview_samples(file_paths, datatype)
+    return {
+        ".jpg": render_iqengine_thumbnail_jpeg_from_files(file_paths, datatype),
+        ".preview.jpg": render_spectrum_jpeg(samples, sample_rate, center_freq),
+        ".minimap": render_iqengine_minimap_from_files(file_paths, datatype),
+    }
+
+
+def _load_or_generate_iqengine_artifacts(
+    *,
+    file_paths: list[str],
+    datatype: str,
+    sample_rate: float,
+    center_freq: float,
+    mode: str,
+) -> dict[str, bytes]:
+    local_base = _local_sidecar_base(file_paths)
+    artifacts: dict[str, bytes] = {}
+    generated: dict[str, bytes] | None = None
+
+    for suffix, _ in _IQENGINE_SIDECARS:
+        local_path = local_base.with_suffix(suffix) if local_base else None
+        if mode == "reuse" and local_path and local_path.exists():
+            artifacts[suffix] = local_path.read_bytes()
+            continue
+
+        if generated is None:
+            generated = _generate_iqengine_artifacts(
+                file_paths=file_paths,
+                datatype=datatype,
+                sample_rate=sample_rate,
+                center_freq=center_freq,
+            )
+        artifacts[suffix] = generated[suffix]
+        if local_path:
+            local_path.write_bytes(generated[suffix])
+
+    return artifacts
+
+
+def _iqengine_mode(iqengine: bool | str) -> str | None:
+    if not iqengine:
+        return None
+    if iqengine is True:
+        return "reuse"
+    if iqengine in {"reuse", "redo"}:
+        return str(iqengine)
+    raise ValueError("iqengine must be False, True, 'reuse', or 'redo'")
+
+
+def _upload_iqengine_artifacts(
+    client: StorageClient,
+    *,
+    base_key: str,
+    file_paths: list[str],
+    datatype: str,
+    sample_rate: float,
+    center_freq: float,
+    mode: str,
+) -> tuple[tuple[str, ...], int]:
+    """Generate and upload IQEngine artifacts next to the SigMF pair.
+
+    Returns the uploaded keys and the number of artifact bytes uploaded.
+    """
+    artifacts = _load_or_generate_iqengine_artifacts(
+        file_paths=file_paths,
+        datatype=datatype,
+        sample_rate=sample_rate,
+        center_freq=center_freq,
+        mode=mode,
+    )
+    uploaded: list[tuple[str, bytes]] = []
+    for suffix, content_type in _IQENGINE_SIDECARS:
+        key = f"{base_key}{suffix}"
+        data = artifacts[suffix]
+        client.upload_bytes(
+            key,
+            data,
+            content_type=content_type,
+            metadata={"role": "iqengine-artifact"},
+        )
+        uploaded.append((key, data))
+    return tuple(key for key, _ in uploaded), sum(len(data) for _, data in uploaded)
 
 
 def ingest_file(
@@ -125,6 +266,7 @@ def ingest_files(
     hardware: str = "unknown",
     recorder: str = "aerolake-ingest",
     description: str | None = None,
+    iqengine: bool | str = False,
     storage_client: StorageClient | None = None,
     chunk_samples: int = 1_000_000,
 ) -> IngestResult:
@@ -148,6 +290,9 @@ def ingest_files(
         Anything but cf32 is converted to normalised cf32 on the way in.
     hardware
         Goes into the ``hardware`` tag + SigMF ``core:hw`` (e.g. ``rfsoc``).
+    iqengine
+        Generate and upload ``capture.jpg`` and ``capture.minimap`` beside the
+        SigMF pair.
     storage_client
         Injected for tests; defaults to a fresh client.
     chunk_samples
@@ -167,10 +312,15 @@ def ingest_files(
     total_size = sum(os.path.getsize(p) for p in file_paths)
     sample_count = total_size // bytes_per_sample
 
-    # --- Key layout (identical to the synthetic producer, ADR-003) --------
+    # --- Key layout (same human-readable folder style as capture) --------
     session_id = uuid.uuid4().hex[:8]
-    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-    base_key = f"{signal_type}/{date_str}/{session_id}/capture"
+    now_utc = datetime.now(UTC)
+    now_local = now_utc.astimezone(_LOCAL_TZ)
+    date_str = now_utc.strftime("%Y-%m-%d")
+    stamp = now_local.strftime("%Y-%m-%d_%Hh%Mm%S")
+    hardware_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", hardware).strip("_") or "unknown"
+    folder = f"{stamp}_{hardware_label}_{session_id}"
+    base_key = f"{signal_type}/{date_str}/{folder}/capture"
     data_key = f"{base_key}.sigmf-data"
     meta_key = f"{base_key}.sigmf-meta"
 
@@ -257,11 +407,31 @@ def ingest_files(
     meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
     client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
 
-    log.info("ingest.done", data_key=data_key, bytes=data_bytes_uploaded)
+    sidecar_keys: tuple[str, ...] = ()
+    sidecar_bytes = 0
+    iqengine_mode = _iqengine_mode(iqengine)
+    if iqengine_mode:
+        sidecar_keys, sidecar_bytes = _upload_iqengine_artifacts(
+            client,
+            base_key=base_key,
+            file_paths=file_paths,
+            datatype=datatype,
+            sample_rate=sample_rate,
+            center_freq=center_freq,
+            mode=iqengine_mode,
+        )
+
+    log.info(
+        "ingest.done",
+        data_key=data_key,
+        bytes=data_bytes_uploaded,
+        sidecars=len(sidecar_keys),
+    )
     return IngestResult(
         session_id=session_id,
         data_key=data_key,
         meta_key=meta_key,
+        sidecar_keys=sidecar_keys,
         sample_count=sample_count,
-        bytes_uploaded=len(meta_bytes) + data_bytes_uploaded,
+        bytes_uploaded=len(meta_bytes) + data_bytes_uploaded + sidecar_bytes,
     )
