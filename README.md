@@ -58,20 +58,41 @@ JSON**, selected by the file extension; commented templates live in
 ## Web interface (GUI)
 
 A Streamlit interface to capture and replay **without a terminal** (optional
-extra, not part of the base install):
+extra). Two tabs: **Capture** (drop a TOML/JSON config, point the antenna on a
+map, capture, review the spectrum, push / keep / discard) and **Playback**
+(browse the lakehouse, view any time window's spectrum via HTTP Range,
+ready-to-run ZeroMQ command, SigMF export). Binds `0.0.0.0:8501`, so colleagues
+reach it at `http://<this-pc>:8501`.
+
+**From a terminal:**
 
     uv sync --extra gui
-    uv run aerolake-gui        # serves on the network (0.0.0.0:8501)
+    uv run aerolake-gui
 
-Two tabs: **Capture** (drop a TOML/JSON config, point the antenna on a map,
-capture, review the spectrum, push to MinIO / keep / discard) and **Playback**
-(browse the lakehouse, view the spectrum of any time window through HTTP Range,
-ready-to-run ZeroMQ command, SigMF export for GNU Radio).
+**No terminal (Windows + WSL):** double-click **`launch-gui.vbs`** to start
+(background, opens the browser) and **`stop-gui.vbs`** to stop — the GUI has no
+window to close. Use the `.bat` versions to see console output. For auto-start
+at boot, put a `launch-gui.vbs` shortcut in `shell:startup` (Win+R).
 
-**No terminal (Windows + WSL)**: double-click **`launch-gui.vbs`** — it starts
-the GUI in the background (no window) and opens the browser. To start it
-automatically when the station boots: put a shortcut to `launch-gui.vbs` in the
-`shell:startup` folder (Win+R → `shell:startup`).
+The `.vbs` → `.bat` → `.sh` chain uses **no hardcoded paths** (it derives the
+repo's WSL path via `wslpath`). Per-PC setup:
+
+- **One-time in WSL** — make the scripts runnable and strip Windows CRLF endings
+  (they live on the Windows filesystem, which otherwise breaks bash):
+
+      chmod +x launch-gui.sh stop-gui.sh
+      sed -i 's/\r$//' launch-gui.sh stop-gui.sh
+
+- **WSL2 + Ubuntu** installed; distro named `Ubuntu` (else set
+  `AEROLAKE_WSL_DISTRO` to your name from `wsl -l -q`).
+- **`uv` in WSL** — found on PATH or in `~/.local/bin`, `~/radioconda/bin`,
+  `~/miniconda3/bin`, `/usr/local/bin`.
+- Extra synced once (`uv sync --extra gui`); the first launch may take a minute.
+
+If nothing opens, run `launch-gui.bat` directly (the `.vbs` hides errors) — it
+prints the failure reason and the log tail
+(`\\wsl.localhost\Ubuntu\tmp\aerolake-gui.log`). To stop from WSL:
+`./stop-gui.sh` or `pkill -f "streamlit run src/aerolake/gui/app.py"`.
 
 ## Quality / tests
 
@@ -110,6 +131,8 @@ Start here:
 
 The whole repository — code, comments, documentation and ADRs — is written in English.
 
-## Author
+## Authors
 
 Théo Schmitt — LASSENA
+
+Camila Nino Francia — Contributor
