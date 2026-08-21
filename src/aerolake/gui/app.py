@@ -10,7 +10,7 @@ discard. It contains **no capture logic of its own**: it reuses
 ``save_capture_locally`` just like the CLI, so everything we already have (SigMF,
 metadata, tags, preview, TOML/JSON) works here for free. Because it talks to
 whatever ``AEROLAKE_S3_ENDPOINT`` points at, the same GUI works against the local
-MinIO today and the lab's remote MinIO (FAST) tomorrow — no code change.
+MinIO and the lab's remote MinIO (FAST) — no code change.
 
 How Streamlit works (in one paragraph)
 --------------------------------------
@@ -522,6 +522,23 @@ def _render_capture() -> None:
         _render_result(prepared)
 
 
+def _preview_key_candidates(data_key: str) -> tuple[str, ...]:
+    base_key = data_key[: -len(".sigmf-data")] if data_key.endswith(".sigmf-data") else data_key
+    return (
+        f"{base_key}-preview.png",
+        f"{base_key}.preview.jpg",
+        f"{base_key}-preview.jpg",
+        f"{base_key}.jpg",
+    )
+
+
+def _find_preview_key(storage: StorageClient, data_key: str) -> str | None:
+    for preview_key in _preview_key_candidates(data_key):
+        if storage.object_exists(preview_key):
+            return preview_key
+    return None
+
+
 def _render_playback() -> None:
     """The ▶ Playback tab: browse MinIO captures, scrub the spectrum, export.
 
@@ -565,10 +582,11 @@ def _render_playback() -> None:
     c2.metric("Sample rate", f"{sr / 1e6:.2f} MS/s")
     c3.metric("Duration", f"{total_s:.1f} s")
 
-    # Preview PNG stored next to the capture (cheap; no full download).
-    preview_key = data_key[: -len(".sigmf-data")] + "-preview.png"
+    # Preview stored next to the capture (cheap; no full download). The capture
+    # path writes capture-preview.png; ingest --iqengine writes capture.preview.jpg.
     try:
-        if storage.object_exists(preview_key):
+        preview_key = _find_preview_key(storage, data_key)
+        if preview_key:
             st.image(
                 storage.download_bytes(preview_key),
                 caption="Preview (as recorded)",
