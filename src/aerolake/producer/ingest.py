@@ -26,6 +26,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -42,6 +45,7 @@ from aerolake.common.storage import StorageClient
 from aerolake.producer.iqengine import (
     render_iqengine_minimap_from_files,
     render_iqengine_thumbnail_jpeg_from_files,
+    supported_iqengine_datatypes,
 )
 from aerolake.producer.preview import render_spectrum_jpeg
 from aerolake.producer.sigmf_writer import SIGMF_VERSION
@@ -67,6 +71,31 @@ _IQENGINE_SIDECARS = (
     (".preview.jpg", "image/jpeg"),
     (".minimap", "application/octet-stream"),
 )
+_SIGMF_DATATYPE_BYTES_PER_SAMPLE: dict[str, int] = {
+    "cf32": 8,
+    "cf32_le": 8,
+    "cu8": 2,
+    "cu8_le": 2,
+    "ci8": 2,
+    "ci8_le": 2,
+    "i8": 2,
+    "cs16": 4,
+    "ci16": 4,
+    "ci16_le": 4,
+    "cu16": 4,
+    "cu16_le": 4,
+    "cs32": 8,
+    "ci32": 8,
+    "ci32_le": 8,
+    "cu32": 8,
+    "cu32_le": 8,
+    "f16": 4,
+    "f16_le": 4,
+    "f32": 8,
+    "f32_le": 8,
+    "cf64": 16,
+    "cf64_le": 16,
+}
 
 
 @dataclass(frozen=True)
@@ -123,6 +152,13 @@ def _iter_cf32_files(file_paths: list[str], datatype: str, chunk_samples: int) -
         yield from _iter_cf32_chunks(path, datatype, chunk_samples)
 
 
+def _iter_file_chunks(file_path: str, chunk_bytes: int = 8 * 1024 * 1024) -> Iterator[bytes]:
+    """Yield raw file bytes without datatype conversion."""
+    with open(file_path, "rb") as f:
+        while chunk := f.read(chunk_bytes):
+            yield chunk
+
+
 def _load_preview_samples(
     file_paths: list[str],
     datatype: str,
@@ -170,6 +206,42 @@ def _generate_iqengine_artifacts(
     }
 
 
+def _generate_iqengine_artifacts_from_sigmf_pair(
+    *,
+    file_path: str,
+    datatype: str,
+    sample_rate: float,
+    center_freq: float,
+) -> dict[str, bytes]:
+    if datatype not in supported_iqengine_datatypes():
+        supported = ", ".join(supported_iqengine_datatypes())
+        raise ValueError(f"Unsupported datatype {datatype!r} for IQEngine. Supported: {supported}")
+
+    preview_datatype = _iqengine_preview_datatype(datatype)
+    samples = (
+        _load_preview_samples([file_path], preview_datatype)
+        if preview_datatype in _SOURCE_DTYPES
+        else np.array([], dtype=np.complex64)
+    )
+    return {
+        ".jpg": render_iqengine_thumbnail_jpeg_from_files([file_path], datatype),
+        ".preview.jpg": render_spectrum_jpeg(samples, sample_rate, center_freq),
+        ".minimap": render_iqengine_minimap_from_files([file_path], datatype),
+    }
+
+
+def _iqengine_preview_datatype(datatype: str) -> str:
+    """Return a producer converter datatype usable for AeroLake's preview JPEG."""
+    return {
+        "cf32_le": "cf32",
+        "cu8_le": "cu8",
+        "ci16": "ci16_le",
+        "cs16": "ci16_le",
+        "ci32": "cs32",
+        "ci32_le": "cs32",
+    }.get(datatype, datatype)
+
+
 def _load_or_generate_iqengine_artifacts(
     *,
     file_paths: list[str],
@@ -191,6 +263,38 @@ def _load_or_generate_iqengine_artifacts(
         if generated is None:
             generated = _generate_iqengine_artifacts(
                 file_paths=file_paths,
+                datatype=datatype,
+                sample_rate=sample_rate,
+                center_freq=center_freq,
+            )
+        artifacts[suffix] = generated[suffix]
+        if local_path:
+            local_path.write_bytes(generated[suffix])
+
+    return artifacts
+
+
+def _load_or_generate_iqengine_artifacts_for_sigmf_pair(
+    *,
+    file_path: str,
+    datatype: str,
+    sample_rate: float,
+    center_freq: float,
+    mode: str,
+) -> dict[str, bytes]:
+    local_base = _local_sidecar_base([file_path])
+    artifacts: dict[str, bytes] = {}
+    generated: dict[str, bytes] | None = None
+
+    for suffix, _ in _IQENGINE_SIDECARS:
+        local_path = local_base.with_suffix(suffix) if local_base else None
+        if mode == "reuse" and local_path and local_path.exists():
+            artifacts[suffix] = local_path.read_bytes()
+            continue
+
+        if generated is None:
+            generated = _generate_iqengine_artifacts_from_sigmf_pair(
+                file_path=file_path,
                 datatype=datatype,
                 sample_rate=sample_rate,
                 center_freq=center_freq,
@@ -247,6 +351,272 @@ def _upload_iqengine_artifacts(
     return tuple(key for key, _ in uploaded), sum(len(data) for _, data in uploaded)
 
 
+def _upload_iqengine_artifacts_for_sigmf_pair(
+    client: StorageClient,
+    *,
+    base_key: str,
+    file_path: str,
+    datatype: str,
+    sample_rate: float,
+    center_freq: float,
+    mode: str,
+) -> tuple[tuple[str, ...], int]:
+    artifacts = _load_or_generate_iqengine_artifacts_for_sigmf_pair(
+        file_path=file_path,
+        datatype=datatype,
+        sample_rate=sample_rate,
+        center_freq=center_freq,
+        mode=mode,
+    )
+    uploaded: list[tuple[str, bytes]] = []
+    for suffix, content_type in _IQENGINE_SIDECARS:
+        key = f"{base_key}{suffix}"
+        data = artifacts[suffix]
+        client.upload_bytes(
+            key,
+            data,
+            content_type=content_type,
+            metadata={"role": "iqengine-artifact"},
+        )
+        uploaded.append((key, data))
+    return tuple(key for key, _ in uploaded), sum(len(data) for _, data in uploaded)
+
+
+def _sigmf_meta_path(data_path: str) -> Path:
+    path = Path(data_path)
+    if str(path).endswith(".sigmf-data"):
+        return Path(str(path)[: -len(".sigmf-data")] + ".sigmf-meta")
+    return path.with_suffix(".sigmf-meta")
+
+
+def _parse_sigmf_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _capture_datetime(metadata: dict[str, Any]) -> datetime:
+    captures = metadata.get("captures")
+    if isinstance(captures, list) and captures:
+        first = captures[0]
+        if isinstance(first, dict):
+            parsed = _parse_sigmf_datetime(first.get("core:datetime"))
+            if parsed is not None:
+                return parsed
+    return datetime.now(UTC)
+
+
+def _safe_key_component(value: object, default: str) -> str:
+    if value is None:
+        return default
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_")
+    return text or default
+
+
+def _apply_iridium_annotations(
+    *,
+    file_path: str,
+    meta_bytes: bytes,
+    parser_path: str,
+    extractor_cmd: str,
+    pypy_cmd: str,
+) -> bytes:
+    """Run iridium-toolkit annotation over a generated SigMF meta file."""
+    if shutil.which(extractor_cmd) is None:
+        raise ValueError(f"Cannot find {extractor_cmd!r} on PATH")
+    if shutil.which(pypy_cmd) is None:
+        raise ValueError(f"Cannot find {pypy_cmd!r} on PATH")
+
+    parser = Path(parser_path).expanduser()
+    if not parser.exists():
+        raise ValueError(f"Cannot find iridium parser at {parser}")
+
+    with tempfile.TemporaryDirectory(prefix="aerolake-iridium-") as tmp_dir:
+        meta_path = Path(tmp_dir) / "capture.sigmf-meta"
+        meta_path.write_bytes(meta_bytes)
+
+        extractor = subprocess.Popen(
+            [extractor_cmd, file_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert extractor.stdout is not None
+        parser_proc = subprocess.Popen(
+            [pypy_cmd, str(parser), f"--sigmf-annotate={meta_path}", "-"],
+            stdin=extractor.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        extractor.stdout.close()
+        parser_stdout, parser_stderr = parser_proc.communicate()
+        _, extractor_stderr = extractor.communicate()
+
+        if extractor.returncode != 0:
+            error = extractor_stderr.decode("utf-8", errors="replace").strip()
+            raise ValueError(f"iridium-extractor failed: {error or 'no error output'}")
+        if parser_proc.returncode != 0:
+            error = parser_stderr.decode("utf-8", errors="replace").strip()
+            if not error:
+                error = parser_stdout.decode("utf-8", errors="replace").strip()
+            raise ValueError(f"iridium-parser annotation failed: {error or 'no error output'}")
+
+        annotated = meta_path.read_bytes()
+        SigMFFile(metadata=json.loads(annotated.decode("utf-8"))).validate()
+        return annotated
+
+
+def ingest_sigmf_pair(
+    *,
+    file_path: str,
+    iqengine: bool | str = False,
+    ensure_sha512: bool = False,
+    storage_client: StorageClient | None = None,
+) -> IngestResult:
+    """Upload an existing SigMF data/meta pair.
+
+    The pair is checked before upload. Missing hashes are added automatically,
+    and ``ci16_le`` data is normalized to the lake's canonical ``cf32_le``
+    representation. ``ensure_sha512`` is retained for API compatibility.
+    """
+    meta_path = _sigmf_meta_path(file_path)
+    if not meta_path.exists():
+        raise ValueError(f"Missing SigMF meta file next to data file: {meta_path}")
+
+    meta_bytes = meta_path.read_bytes()
+    metadata = json.loads(meta_bytes.decode("utf-8"))
+    SigMFFile(metadata=metadata).validate()
+
+    global_meta = metadata.get("global", {})
+    captures = metadata.get("captures", [])
+    first_capture = captures[0] if isinstance(captures, list) and captures else {}
+    if not isinstance(global_meta, dict) or not isinstance(first_capture, dict):
+        raise ValueError("SigMF metadata must contain global and captures[0] objects")
+
+    datatype = str(global_meta.get("core:datatype") or "")
+    if datatype not in _SIGMF_DATATYPE_BYTES_PER_SAMPLE:
+        raise ValueError(f"Unsupported SigMF datatype {datatype!r}")
+    if datatype not in {"cf32", "cf32_le", "ci16_le"}:
+        raise ValueError(
+            f"Existing SigMF datatype {datatype!r} cannot be normalized; "
+            "supported pair datatypes are cf32, cf32_le, and ci16_le"
+        )
+    bytes_per_sample = _SIGMF_DATATYPE_BYTES_PER_SAMPLE[datatype]
+    total_size = os.path.getsize(file_path)
+    if total_size % bytes_per_sample:
+        raise ValueError(
+            f"SigMF data size {total_size} is not aligned to datatype {datatype!r}"
+        )
+    sample_count = total_size // bytes_per_sample
+    sample_rate = float(global_meta.get("core:sample_rate") or 0)
+    center_freq = float(first_capture.get("core:frequency") or 0)
+
+    client = storage_client or StorageClient()
+    session_id = uuid.uuid4().hex[:8]
+    capture_dt = _capture_datetime(metadata)
+    date_str = capture_dt.strftime("%Y-%m-%d")
+    stamp = capture_dt.astimezone(_LOCAL_TZ).strftime("%Y-%m-%d_%Hh%Mm%S")
+    signal_type_value = global_meta.get("aerolake:signal_type")
+    if not isinstance(signal_type_value, str) or not signal_type_value.strip():
+        raise ValueError(
+            "Existing SigMF metadata is missing global.aerolake:signal_type; "
+            "indicate the signal type before ingesting"
+        )
+    signal_type = _safe_key_component(signal_type_value, "")
+    if not signal_type:
+        raise ValueError(
+            "global.aerolake:signal_type must contain letters, numbers, '.', '_', or '-'; "
+            "indicate a valid signal type before ingesting"
+        )
+    hardware = _safe_key_component(global_meta.get("core:hw"), "unknown")
+    recorder = _safe_key_component(global_meta.get("core:recorder"), "external-sigmf")
+    folder = f"{stamp}_{hardware}_{session_id}"
+    base_key = f"{signal_type}/{date_str}/{folder}/capture"
+    data_key = f"{base_key}.sigmf-data"
+    meta_key = f"{base_key}.sigmf-meta"
+
+    # Checklist: verify the source hash, normalize if needed, then hash the
+    # exact bytes that will be stored.
+    source_hasher = hashlib.sha512()
+    for chunk in _iter_file_chunks(file_path):
+        source_hasher.update(chunk)
+    source_sha512 = source_hasher.hexdigest()
+    existing_sha512 = global_meta.get("core:sha512")
+    if existing_sha512 is not None and existing_sha512 != source_sha512:
+        raise ValueError("Existing SigMF core:sha512 does not match the .sigmf-data bytes")
+
+    normalized = datatype == "ci16_le"
+    stored_datatype = _TARGET_DATATYPE if datatype in {"cf32", "ci16_le"} else datatype
+    if stored_datatype != datatype:
+        global_meta["core:datatype"] = stored_datatype
+
+    def _source_or_normalized_chunks() -> Iterator[bytes]:
+        if normalized:
+            yield from _iter_cf32_chunks(file_path, datatype, 1_000_000)
+        else:
+            yield from _iter_file_chunks(file_path)
+
+    stored_hasher = hashlib.sha512()
+    for chunk in _source_or_normalized_chunks():
+        stored_hasher.update(chunk)
+    stored_sha512 = stored_hasher.hexdigest()
+    if stored_datatype != datatype or existing_sha512 is None:
+        global_meta["core:sha512"] = stored_sha512
+        SigMFFile(metadata=metadata).validate()
+        meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
+
+    data_metadata = {
+        "sample-rate": str(int(sample_rate)),
+        "center-freq": str(int(center_freq)),
+        "datetime": capture_dt.isoformat(),
+        "session-id": session_id,
+        "datatype": stored_datatype,
+        "sample-count": str(sample_count),
+    }
+    data_tags = {
+        "signal-type": signal_type,
+        "recorder": recorder,
+        "hardware": hardware,
+    }
+
+    client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
+    data_bytes_uploaded = client.upload_multipart(
+        data_key,
+        _source_or_normalized_chunks(),
+        content_type="application/octet-stream",
+        metadata=data_metadata,
+        tags=data_tags,
+    )
+
+    sidecar_keys: tuple[str, ...] = ()
+    sidecar_bytes = 0
+    iqengine_mode = _iqengine_mode(iqengine)
+    if iqengine_mode:
+        sidecar_keys, sidecar_bytes = _upload_iqengine_artifacts_for_sigmf_pair(
+            client,
+            base_key=base_key,
+            file_path=file_path,
+            datatype=datatype,
+            sample_rate=sample_rate,
+            center_freq=center_freq,
+            mode=iqengine_mode,
+        )
+
+    return IngestResult(
+        session_id=session_id,
+        data_key=data_key,
+        meta_key=meta_key,
+        sidecar_keys=sidecar_keys,
+        sample_count=sample_count,
+        bytes_uploaded=len(meta_bytes) + data_bytes_uploaded + sidecar_bytes,
+    )
+
+
 def ingest_file(
     *,
     file_path: str,
@@ -267,6 +637,10 @@ def ingest_files(
     recorder: str = "aerolake-ingest",
     description: str | None = None,
     iqengine: bool | str = False,
+    iridium_annotate: bool = False,
+    iridium_parser: str = "~/iridium-toolkit/iridium-parser.py",
+    iridium_extractor: str = "iridium-extractor",
+    pypy: str = "pypy3",
     storage_client: StorageClient | None = None,
     chunk_samples: int = 1_000_000,
 ) -> IngestResult:
@@ -293,6 +667,9 @@ def ingest_files(
     iqengine
         Generate and upload ``capture.jpg`` and ``capture.minimap`` beside the
         SigMF pair.
+    iridium_annotate
+        Run ``iridium-extractor`` piped into iridium-toolkit's parser to append
+        SigMF annotations before the meta is uploaded.
     storage_client
         Injected for tests; defaults to a fresh client.
     chunk_samples
@@ -364,6 +741,18 @@ def ingest_files(
     # Fail fast if the metadata is malformed (before any upload).
     SigMFFile(metadata=metadata).validate()
     meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
+    if iridium_annotate:
+        if len(file_paths) != 1:
+            raise ValueError("--iridium-annotate requires a single input file")
+        meta_bytes = _apply_iridium_annotations(
+            file_path=file_paths[0],
+            meta_bytes=meta_bytes,
+            parser_path=iridium_parser,
+            extractor_cmd=iridium_extractor,
+            pypy_cmd=pypy,
+        )
+        metadata = json.loads(meta_bytes.decode("utf-8"))
+        global_meta = metadata["global"]
 
     # --- Upload: meta first, then data (streamed via multipart) -----------
     # Same ordering rule as the producer: a consumer racing between the two
