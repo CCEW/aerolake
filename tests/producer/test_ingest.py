@@ -15,9 +15,11 @@ import re
 import numpy as np
 import pytest
 
+import aerolake.producer.ingest as ingest_module
+import aerolake.scripts.ingest as ingest_script
 from aerolake.common.storage import StorageClient
 from aerolake.consumer.reader import CaptureReader
-from aerolake.producer.ingest import ingest_file, ingest_files
+from aerolake.producer.ingest import ingest_file, ingest_files, ingest_sigmf_pair
 from aerolake.scripts.ingest import _resolve_files, main
 from aerolake.scripts.iqengine_artifacts import generate_artifacts
 
@@ -235,6 +237,34 @@ def test_ingest_iqengine_redo_regenerates_existing_sidecars(
     assert path.with_suffix(".minimap").stat().st_size == 102_400
 
 
+def test_ingest_iridium_annotation_is_preserved_after_hash_rewrite(
+    storage_client: StorageClient, tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    samples = np.ones(100, dtype=np.complex64)
+    path.write_bytes(samples.tobytes())
+
+    def fake_annotate(**kwargs) -> bytes:
+        meta = json.loads(kwargs["meta_bytes"])
+        meta["annotations"] = [{"core:sample_start": 12, "core:label": "Iridium frame"}]
+        return json.dumps(meta, indent=2, sort_keys=True).encode("utf-8")
+
+    monkeypatch.setattr(ingest_module, "_apply_iridium_annotations", fake_annotate)
+
+    result = ingest_files(
+        file_paths=[str(path)],
+        signal_type="iridium",
+        sample_rate=10_000_000,
+        center_freq=1_622_000_000,
+        iridium_annotate=True,
+        storage_client=storage_client,
+    )
+
+    uploaded = json.loads(storage_client.download_bytes(result.meta_key))
+    assert uploaded["annotations"] == [{"core:sample_start": 12, "core:label": "Iridium frame"}]
+    assert uploaded["global"]["core:sha512"] == hashlib.sha512(samples.tobytes()).hexdigest()
+
+
 def test_iqengine_artifact_command_preserves_existing_jpeg_as_preview(tmp_path) -> None:
     base = tmp_path / "capture"
     samples = np.exp(1j * np.linspace(0, 8 * np.pi, 4096)).astype(np.complex64)
@@ -259,6 +289,215 @@ def test_iqengine_artifact_command_preserves_existing_jpeg_as_preview(tmp_path) 
     assert jpg_path.read_bytes()[:2] == b"\xff\xd8"
     assert preview_path.read_bytes() == old_jpeg
     assert minimap_path.stat().st_size == 102_400
+
+
+def test_ingest_sigmf_pair_preserves_existing_meta(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    samples = np.arange(128, dtype=np.complex64)
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(samples.tobytes())
+    meta = {
+        "global": {
+            "core:datatype": "cf32_le",
+            "core:sample_rate": 2_000_000,
+            "core:hw": "PlutoSDR",
+            "core:recorder": "SDRangel",
+            "core:version": "1.2.3",
+            "aerolake:signal_type": "nr5g",
+        },
+        "captures": [
+            {
+                "core:sample_start": 0,
+                "core:frequency": 1_876_954_000,
+                "core:datetime": "2023-07-20T11:39:48.680Z",
+            }
+        ],
+        "annotations": [
+            {
+                "core:sample_start": 10,
+                "core:sample_count": 20,
+                "core:label": "PSS",
+            }
+        ],
+    }
+    meta_bytes = json.dumps(meta, indent=2).encode("utf-8")
+    meta_path.write_bytes(meta_bytes)
+
+    result = ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
+
+    assert result.data_key.startswith("nr5g/2023-07-20/")
+    uploaded_meta = json.loads(storage_client.download_bytes(result.meta_key))
+    assert uploaded_meta["global"]["core:sha512"] == hashlib.sha512(
+        samples.tobytes()
+    ).hexdigest()
+    assert storage_client.download_bytes(result.data_key) == samples.tobytes()
+    info = CaptureReader(storage_client).inspect(result.data_key)
+    assert info.tags["signal-type"] == "nr5g"
+    assert info.tags["hardware"] == "PlutoSDR"
+    assert info.tags["recorder"] == "SDRangel"
+    assert info.metadata["datetime"] == "2023-07-20T11:39:48.680000+00:00"
+    assert info.metadata["sample-count"] == "128"
+
+
+def test_ingest_sigmf_pair_normalizes_ci16_le_and_updates_metadata(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    raw = np.array([32767, -32768, 0, 16384], dtype="<i2")
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(raw.tobytes())
+    meta_path.write_text(
+        json.dumps(
+            {
+                "global": {
+                    "core:datatype": "ci16_le",
+                    "core:sample_rate": 2_000_000,
+                    "aerolake:signal_type": "gnss_l1",
+                },
+                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
+                "annotations": [],
+            }
+        )
+    )
+
+    result = ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
+
+    content = CaptureReader(storage_client).read(result.data_key)
+    assert content.sigmf_meta["global"]["core:datatype"] == "cf32_le"
+    np.testing.assert_allclose(
+        content.samples,
+        np.array([32767 / 32768 - 1j, 0 + 0.5j], dtype=np.complex64),
+    )
+    stored_data = storage_client.download_bytes(result.data_key)
+    assert hashlib.sha512(stored_data).hexdigest() == content.sigmf_meta["global"]["core:sha512"]
+
+
+def test_ingest_sigmf_pair_can_add_missing_sha512(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    samples = np.arange(128, dtype=np.complex64)
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(samples.tobytes())
+    meta = {
+        "global": {
+            "core:datatype": "cf32_le",
+            "core:sample_rate": 2_000_000,
+            "aerolake:signal_type": "nr5g",
+        },
+        "captures": [{"core:sample_start": 0, "core:frequency": 1_876_954_000}],
+        "annotations": [],
+    }
+    original_meta_bytes = json.dumps(meta, indent=2).encode("utf-8")
+    meta_path.write_bytes(original_meta_bytes)
+
+    result = ingest_sigmf_pair(
+        file_path=str(data_path),
+        ensure_sha512=True,
+        storage_client=storage_client,
+    )
+
+    uploaded_meta = json.loads(storage_client.download_bytes(result.meta_key))
+    assert uploaded_meta["global"]["core:sha512"] == hashlib.sha512(
+        samples.tobytes()
+    ).hexdigest()
+    assert meta_path.read_bytes() == original_meta_bytes
+
+
+def test_ingest_sigmf_pair_requires_signal_type(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    data_path = tmp_path / "capture.sigmf-data"
+    data_path.write_bytes(np.ones(128, dtype=np.complex64).tobytes())
+    data_path.with_suffix(".sigmf-meta").write_text(
+        json.dumps(
+            {
+                "global": {
+                    "core:datatype": "cf32_le",
+                    "core:sample_rate": 2_000_000,
+                },
+                "captures": [{"core:sample_start": 0, "core:frequency": 1_000_000}],
+                "annotations": [],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="missing global.aerolake:signal_type"):
+        ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
+
+
+def test_ingest_sigmf_pair_rejects_mismatched_sha512(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    samples = np.arange(128, dtype=np.complex64)
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(samples.tobytes())
+    meta_path.write_text(
+        json.dumps(
+            {
+                "global": {
+                    "core:datatype": "cf32_le",
+                    "core:sample_rate": 2_000_000,
+                    "core:sha512": "0" * 128,
+                    "aerolake:signal_type": "gnss_l1",
+                },
+                "captures": [{"core:sample_start": 0, "core:frequency": 1_876_954_000}],
+                "annotations": [],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="core:sha512 does not match"):
+        ingest_sigmf_pair(
+            file_path=str(data_path),
+            ensure_sha512=True,
+            storage_client=storage_client,
+        )
+
+
+def test_ingest_sigmf_pair_generates_iqengine_sidecars(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    samples = np.exp(1j * np.linspace(0, 8 * np.pi, 4096)).astype(np.complex64)
+    data_path.write_bytes(samples.tobytes())
+    meta_path.write_text(
+        json.dumps(
+            {
+                "global": {
+                    "core:datatype": "cf32_le",
+                    "core:sample_rate": 2_000_000,
+                    "core:version": "1.2.3",
+                    "aerolake:signal_type": "gnss_l1",
+                },
+                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
+                "annotations": [],
+            }
+        )
+    )
+
+    result = ingest_sigmf_pair(
+        file_path=str(data_path),
+        iqengine=True,
+        storage_client=storage_client,
+    )
+
+    base_key = result.data_key[: -len(".sigmf-data")]
+    assert result.sidecar_keys == (
+        f"{base_key}.jpg",
+        f"{base_key}.preview.jpg",
+        f"{base_key}.minimap",
+    )
+    assert storage_client.download_bytes(result.sidecar_keys[0])[:2] == b"\xff\xd8"
+    assert storage_client.download_bytes(result.sidecar_keys[1])[:2] == b"\xff\xd8"
+    assert len(storage_client.download_bytes(result.sidecar_keys[2])) == 102_400
+    assert data_path.with_suffix(".jpg").exists()
+    assert data_path.with_suffix(".preview.jpg").exists()
+    assert data_path.with_suffix(".minimap").exists()
 
 
 # --- CLI -----------------------------------------------------------------
@@ -368,6 +607,154 @@ def test_ingest_cli_iqengine_redo_is_accepted(
     assert path.with_suffix(".jpg").exists()
     assert path.with_suffix(".preview.jpg").exists()
     assert path.with_suffix(".minimap").exists()
+
+
+def test_ingest_cli_passes_iridium_annotation_options(
+    storage_client: StorageClient, tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.ones(100, dtype=np.complex64).tobytes())
+    captured: dict[str, object] = {}
+
+    def fake_ingest_files(**kwargs):
+        captured.update(kwargs)
+        return ingest_module.IngestResult(
+            session_id="abcd1234",
+            data_key="iridium/2026-01-01/session/capture.sigmf-data",
+            meta_key="iridium/2026-01-01/session/capture.sigmf-meta",
+            sidecar_keys=(),
+            sample_count=100,
+            bytes_uploaded=800,
+        )
+
+    monkeypatch.setattr(ingest_script, "ingest_files", fake_ingest_files)
+
+    code = main(
+        [
+            str(path),
+            "--signal-type",
+            "iridium",
+            "--sample-rate",
+            "10e6",
+            "--center-freq",
+            "1622e6",
+            "--iridium-annotate",
+            "--iridium-parser",
+            str(tmp_path / "iridium-parser.py"),
+            "--iridium-extractor",
+            "custom-extractor",
+            "--pypy",
+            "custom-pypy",
+        ],
+        storage_client=storage_client,
+    )
+
+    assert code == 0
+    assert captured["iridium_annotate"] is True
+    assert captured["iridium_parser"] == str(tmp_path / "iridium-parser.py")
+    assert captured["iridium_extractor"] == "custom-extractor"
+    assert captured["pypy"] == "custom-pypy"
+
+
+def test_ingest_cli_uses_existing_sigmf_meta_when_no_metadata_flags(
+    storage_client: StorageClient, tmp_path, capsys
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    path.write_bytes(np.ones(4096, dtype=np.complex64).tobytes())
+    meta_path.write_text(
+        json.dumps(
+            {
+                "global": {
+                    "core:datatype": "cf32_le",
+                    "core:sample_rate": 2_000_000,
+                    "core:version": "1.2.3",
+                    "aerolake:signal_type": "gnss_l1",
+                },
+                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
+                "annotations": [{"core:sample_start": 0, "core:label": "kept"}],
+            }
+        )
+    )
+
+    code = main([str(path), "--iqengine"], storage_client=storage_client)
+
+    assert code == 0
+    assert "existing SigMF pair" in capsys.readouterr().out
+    data_key = next(
+        key for key in storage_client.list_objects(prefix="gnss_l1/") if key.endswith(".sigmf-data")
+    )
+    meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
+    uploaded_meta = json.loads(storage_client.download_bytes(meta_key))
+    assert uploaded_meta["annotations"][0]["core:label"] == "kept"
+
+
+def test_ingest_cli_can_ensure_sha512_for_existing_sigmf_pair(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    samples = np.ones(256, dtype=np.complex64)
+    path.write_bytes(samples.tobytes())
+    meta_path.write_text(
+        json.dumps(
+            {
+                "global": {
+                    "core:datatype": "cf32_le",
+                    "core:sample_rate": 2_000_000,
+                    "aerolake:signal_type": "gnss_l1",
+                },
+                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
+                "annotations": [],
+            }
+        )
+    )
+
+    code = main([str(path), "--ensure-sha512"], storage_client=storage_client)
+
+    assert code == 0
+    data_key = next(
+        key for key in storage_client.list_objects(prefix="gnss_l1/") if key.endswith(".sigmf-data")
+    )
+    meta_key = data_key[: -len(".sigmf-data")] + ".sigmf-meta"
+    uploaded_meta = json.loads(storage_client.download_bytes(meta_key))
+    assert uploaded_meta["global"]["core:sha512"] == hashlib.sha512(
+        samples.tobytes()
+    ).hexdigest()
+
+
+def test_ingest_cli_rejects_ensure_sha512_with_generated_meta_mode(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.ones(100, dtype=np.complex64).tobytes())
+
+    code = main(
+        [
+            str(path),
+            "--signal-type",
+            "gnss_l1",
+            "--sample-rate",
+            "2e6",
+            "--center-freq",
+            "1575.42e6",
+            "--ensure-sha512",
+        ],
+        storage_client=storage_client,
+    )
+
+    assert code == 2
+
+
+def test_ingest_cli_partial_metadata_flags_return_two(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.ones(100, dtype=np.complex64).tobytes())
+
+    code = main([str(path), "--signal-type", "gnss_l1"], storage_client=storage_client)
+
+    assert code == 2
 
 
 def test_ingest_cli_missing_file_returns_two(storage_client: StorageClient) -> None:
