@@ -75,6 +75,33 @@ class Settings(BaseSettings):
         "certificate — the clean fix for internal CAs. Empty = system store.",
     )
 
+    # --- IQEngine catalog integration ------------------------------------
+    iqengine_url: str = Field(
+        default="",
+        description="IQEngine integration API base URL; empty disables integration.",
+    )
+    iqengine_token: SecretStr = Field(
+        default=SecretStr(""),
+        description="Bearer token for the dedicated IQEngine service identity.",
+    )
+    iqengine_account: str = Field(
+        default="",
+        description="IQEngine datasource account/region identifier.",
+    )
+    iqengine_container: str = Field(
+        default="",
+        description="IQEngine datasource container/bucket identifier.",
+    )
+    iqengine_prefix: str = Field(
+        default="",
+        description="Optional object prefix configured on the IQEngine datasource.",
+    )
+    iqengine_timeout_s: float = Field(
+        default=10.0,
+        gt=0,
+        description="Timeout for one IQEngine API request in seconds.",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
