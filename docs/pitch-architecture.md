@@ -112,10 +112,12 @@ This is the point **not to oversell** in a presentation. Today AeroLake is a
 - ✅ **Targeted extraction**: partial reads through *HTTP Range* (read back
   t=200s without loading the whole file) then publication on a **ZeroMQ Pub/Sub**
   bus.
-- 🔜 **SQL / analytical layer** (Parquet, Apache Iceberg): this is *the* brick
-  that would turn a "catalogued lake" into a "real lakehouse queryable in SQL".
-  It is **identified as a future evolution** (it had been explored then set
-  aside, ADR-013, to refocus on the mandate's RX pipeline).
+- 🔜 **Metadata query integration**: IQEngine provides the MongoDB-backed
+  catalog and query API, while MinIO remains the store for the SigMF files.
+  Reusing that catalog avoids duplicating database infrastructure in AeroLake
+  (see ADR-021 and ADR-022). A future SQL/analytical layer such as Parquet or
+  Apache Iceberg remains a separate evolution, not a prerequisite for metadata
+  discovery.
 
 **Honest wording for the pitch:** "AeroLake lays the foundations of an RF
 lakehouse — standardised object storage + cataloguing through tags and

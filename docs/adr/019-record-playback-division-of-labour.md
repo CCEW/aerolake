@@ -4,6 +4,7 @@
 - **Date:** 2026-06-26
 - **Author:** Théo Schmitt
 - **Refines:** ADR-007 (playback layers), ADR-012 (RF re-emission), ADR-013 (mandate realignment)
+- **Relates to:** ADR-021 (IQEngine catalog integration), ADR-022 (ownership boundary)
 
 ## Context
 
@@ -13,7 +14,7 @@ record/playback is **two very different problems wearing one name**:
 
 | Concern | What it needs | Best tool |
 |---|---|---|
-| **Lakehouse** — store, describe, tag, catalogue, discover, serve, software/visual replay, network stream | object storage, metadata, HTTP Range, ZeroMQ, a GUI | **AeroLake (Python)** |
+| **Lakehouse** — store, describe, tag, catalogue integration, discover, serve, software/visual replay, network stream | object storage, metadata, HTTP Range, ZeroMQ, a GUI | **AeroLake (Python) + IQEngine catalog** |
 | **RF edge** — sustained high-rate capture to disk, and sample-accurate transmission over the air | real-time DSP, a TX-capable SDR, deterministic timing | **GNU Radio + SDR** |
 
 Python is excellent for the first and structurally wrong for the second:
@@ -41,8 +42,9 @@ the contract between them.**
   `soapy_source` capture **only** for synthetic / light RTL-SDR / quick test
   captures — not as the high-throughput path.
 - **Lakehouse.** AeroLake owns everything between: MinIO storage, the
-  metadata/tag convention (ADR-003), partial/seeked reads (ADR-009), the
-  catalogue, the auto-preview, and the GUI.
+  metadata/tag convention (ADR-003), catalog integration, partial/seeked reads
+  (ADR-009), the auto-preview, and the GUI. IQEngine owns catalog indexing,
+  MongoDB persistence, and catalog search (ADR-021/022).
 - **Playback — software / visualisation.** AeroLake: `CapturePlayer` paces
   frames at the recorded rate (ADR-007 layer 1), `FramePublisher` streams them
   over ZeroMQ (ADR-008), and the GUI shows/relays them. This is for inspection,
@@ -54,10 +56,14 @@ the contract between them.**
 
 ### Optimisations this decision implies
 
-1. **Prefer the native sample datatype in storage.** Forcing every capture to
-   `cf32` (8 bytes/sample) is convenient but 2–4× larger than keeping native
-   `cs16`/`cu8`. For volume, store the native `datatype` (SigMF records it) and
-   convert only on read when needed.
+1. **Normalize the ingest boundary to `cf32_le`.** The recorder may produce
+  native `cf32`, `cu8`, `cs16`, or `ci16_le`, but `aerolake-ingest` converts
+  them to normalized `cf32_le` before storing. Existing SigMF pairs are
+  checked first; declared `ci16_le` data is converted, legacy `cf32` metadata
+  is canonicalized to `cf32_le`, and the stored-byte SHA-512 is recorded.
+  This keeps the current reader, partial-read byte math, previews, and GNU
+  Radio playback on one representation. Native-datatype storage remains a
+  future architectural option, not the current contract.
 2. **Reinstate a fetch→local-file bridge** (the archived `aerolake-fetch`,
    ADR-013) so GNU Radio playback reads a local file rather than streaming from
    MinIO.
@@ -72,7 +78,7 @@ the contract between them.**
   is a strong signal the boundary is in the right place.
 - **The contract is a standard file**, so the two halves evolve independently.
 - **Leaves a finishable, hand-offable target** for the lakehouse owner: storage
-  + catalogue + software/visual playback + the GNU Radio bridge.
+  + catalog integration + software/visual playback + the GNU Radio bridge.
 
 ## Consequences
 
@@ -80,7 +86,8 @@ the contract between them.**
 
 - Clear ownership and a clean seam; the GUI playback can ship its software/visual
   mode now and defer RF re-emission to GNU Radio without rework.
-- Storage and bandwidth become tunable (native datatype) instead of fixed at cf32.
+- Storage and playback use one predictable representation (`cf32_le`), while
+  source-native formats remain supported at the ingest boundary.
 
 ### Negative / open
 
@@ -88,8 +95,9 @@ the contract between them.**
   heavy); acceptable, but document which to use when.
 - Real RF re-emission stays gated on GNU Radio + TX hardware + Camila — by
   design, not a gap to close in the Python codebase.
-- Native-datatype storage and the fetch bridge are **not yet implemented**; this
-  ADR records the direction, not done work.
+- Native-datatype storage and the fetch bridge are **not yet implemented**;
+  this ADR records the fetch bridge as future work, while the current ingest
+  contract is normalized `cf32_le` storage.
 
 ## Alternatives considered
 
