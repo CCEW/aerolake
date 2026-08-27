@@ -244,9 +244,11 @@ def prepare_capture(
     hardware_info = signal.hardware_info if isinstance(signal, SdrCapture) else None
     overflow_count = signal.overflow_count if isinstance(signal, SdrCapture) else None
     rich = rich or RichMetadata()
+    author = rich.author if rich.author is not None else "AeroLake"
+    operator = author
     capture = encode(
         signal,
-        author=rich.author if rich.author is not None else "AeroLake",
+        author=author,
         recorder=recorder,
         hardware=hardware,
         signal_type=signal_type,

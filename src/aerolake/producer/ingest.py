@@ -48,7 +48,10 @@ from aerolake.producer.iqengine import (
     supported_iqengine_datatypes,
 )
 from aerolake.producer.preview import render_spectrum_jpeg
-from aerolake.producer.sigmf_writer import SIGMF_VERSION
+from aerolake.producer.sigmf_writer import (
+    build_metadata,
+    complete_canonical_metadata,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -490,8 +493,6 @@ def ingest_sigmf_pair(
 
     meta_bytes = meta_path.read_bytes()
     metadata = json.loads(meta_bytes.decode("utf-8"))
-    SigMFFile(metadata=metadata).validate()
-
     global_meta = metadata.get("global", {})
     captures = metadata.get("captures", [])
     first_capture = captures[0] if isinstance(captures, list) and captures else {}
@@ -513,6 +514,18 @@ def ingest_sigmf_pair(
             f"SigMF data size {total_size} is not aligned to datatype {datatype!r}"
         )
     sample_count = total_size // bytes_per_sample
+    missing = complete_canonical_metadata(metadata, sample_count=sample_count)
+    if missing:
+        meta_path.write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        raise ValueError(
+            "Existing SigMF metadata was incomplete. Added defaults and placeholders to "
+            f"{meta_path}. Fill these fields and run ingest again: "
+            + ", ".join(missing)
+        )
+    SigMFFile(metadata=metadata).validate()
     sample_rate = float(global_meta.get("core:sample_rate") or 0)
     center_freq = float(first_capture.get("core:frequency") or 0)
 
@@ -716,30 +729,19 @@ def ingest_files(
             f"Ingested {datatype} capture at {sample_rate / 1e6:.3f} MS/s, "
             f"{center_freq / 1e6:.3f} MHz"
         )
-    global_meta: dict[str, object] = {
-        "core:datatype": _TARGET_DATATYPE,
-        "core:sample_rate": float(sample_rate),
-        "core:author": "AeroLake",
-        "core:description": description,
-        "core:recorder": recorder,
-        "core:hw": hardware,
-        "core:version": SIGMF_VERSION,
-        "core:num_channels": 1,
-        "core:offset": 0,
-    }
-    metadata = {
-        "global": global_meta,
-        "captures": [
-            {
-                "core:sample_start": 0,
-                "core:frequency": float(center_freq),
-                "core:datetime": datetime.now(UTC).isoformat(),
-            }
-        ],
-        "annotations": [],
-    }
-    # Fail fast if the metadata is malformed (before any upload).
-    SigMFFile(metadata=metadata).validate()
+    metadata = build_metadata(
+        sample_count=sample_count,
+        sample_rate=sample_rate,
+        center_freq=center_freq,
+        capture_datetime=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        author="AeroLake",
+        description=description,
+        recorder=recorder,
+        hardware=hardware,
+        signal_type=signal_type,
+    )
+    global_meta = metadata["global"]
+    assert isinstance(global_meta, dict)
     meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
     if iridium_annotate:
         if len(file_paths) != 1:

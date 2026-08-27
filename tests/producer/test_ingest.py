@@ -24,6 +24,46 @@ from aerolake.scripts.ingest import _resolve_files, main
 from aerolake.scripts.iqengine_artifacts import generate_artifacts
 
 
+def _canonical_meta(
+    *,
+    datatype: str = "cf32_le",
+    signal_type: str = "gnss_l1",
+    sample_rate: float = 2_000_000,
+    center_freq: float = 1_575_420_000,
+    annotations: list[dict] | None = None,
+    **global_overrides,
+) -> dict:
+    global_meta = {
+        "core:datatype": datatype,
+        "core:sample_rate": sample_rate,
+        "core:author": "Test operator",
+        "core:description": "Test capture",
+        "core:recorder": "test-recorder",
+        "core:hw": "test-hardware",
+        "core:version": "1.2.6",
+        "core:num_channels": 1,
+        "core:offset": 0,
+        "aerolake:signal_type": signal_type,
+        "aerolake:operator": "test-operator",
+        "aerolake:mobile": False,
+        "aerolake:duration_s": 0.001,
+        "aerolake:sample_count": 1,
+        "core:extensions": [{"name": "aerolake", "version": "1.0.0", "optional": True}],
+    }
+    global_meta.update(global_overrides)
+    return {
+        "global": global_meta,
+        "captures": [
+            {
+                "core:sample_start": 0,
+                "core:frequency": center_freq,
+                "core:datetime": "2023-07-20T11:39:48.680Z",
+            }
+        ],
+        "annotations": [] if annotations is None else annotations,
+    }
+
+
 def test_ingest_cf32_file_roundtrips(storage_client: StorageClient, tmp_path) -> None:
     # A cf32 file (what GNU Radio's File Sink writes).
     samples = (np.arange(1000) + 1j * np.arange(1000)).astype(np.complex64)
@@ -298,30 +338,14 @@ def test_ingest_sigmf_pair_preserves_existing_meta(
     data_path = tmp_path / "capture.sigmf-data"
     meta_path = tmp_path / "capture.sigmf-meta"
     data_path.write_bytes(samples.tobytes())
-    meta = {
-        "global": {
-            "core:datatype": "cf32_le",
-            "core:sample_rate": 2_000_000,
-            "core:hw": "PlutoSDR",
-            "core:recorder": "SDRangel",
-            "core:version": "1.2.3",
-            "aerolake:signal_type": "nr5g",
-        },
-        "captures": [
-            {
-                "core:sample_start": 0,
-                "core:frequency": 1_876_954_000,
-                "core:datetime": "2023-07-20T11:39:48.680Z",
-            }
+    meta = _canonical_meta(
+        signal_type="nr5g",
+        center_freq=1_876_954_000,
+        **{"core:hw": "PlutoSDR", "core:recorder": "SDRangel", "core:version": "1.2.3"},
+        annotations=[
+            {"core:sample_start": 10, "core:sample_count": 20, "core:label": "PSS"}
         ],
-        "annotations": [
-            {
-                "core:sample_start": 10,
-                "core:sample_count": 20,
-                "core:label": "PSS",
-            }
-        ],
-    }
+    )
     meta_bytes = json.dumps(meta, indent=2).encode("utf-8")
     meta_path.write_bytes(meta_bytes)
 
@@ -350,15 +374,10 @@ def test_ingest_sigmf_pair_normalizes_ci16_le_and_updates_metadata(
     data_path.write_bytes(raw.tobytes())
     meta_path.write_text(
         json.dumps(
-            {
-                "global": {
-                    "core:datatype": "ci16_le",
-                    "core:sample_rate": 2_000_000,
-                    "aerolake:signal_type": "gnss_l1",
-                },
-                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
-                "annotations": [],
-            }
+            _canonical_meta(
+                datatype="ci16_le",
+                annotations=[],
+            )
         )
     )
 
@@ -381,15 +400,7 @@ def test_ingest_sigmf_pair_can_add_missing_sha512(
     data_path = tmp_path / "capture.sigmf-data"
     meta_path = tmp_path / "capture.sigmf-meta"
     data_path.write_bytes(samples.tobytes())
-    meta = {
-        "global": {
-            "core:datatype": "cf32_le",
-            "core:sample_rate": 2_000_000,
-            "aerolake:signal_type": "nr5g",
-        },
-        "captures": [{"core:sample_start": 0, "core:frequency": 1_876_954_000}],
-        "annotations": [],
-    }
+    meta = _canonical_meta(signal_type="nr5g", center_freq=1_876_954_000)
     original_meta_bytes = json.dumps(meta, indent=2).encode("utf-8")
     meta_path.write_bytes(original_meta_bytes)
 
@@ -424,8 +435,16 @@ def test_ingest_sigmf_pair_requires_signal_type(
         )
     )
 
-    with pytest.raises(ValueError, match="missing global.aerolake:signal_type"):
+    with pytest.raises(ValueError, match=r"global\.aerolake:signal_type"):
         ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
+
+    completed = json.loads(data_path.with_suffix(".sigmf-meta").read_text())
+    assert completed["global"]["core:author"] == "AeroLake"
+    assert completed["global"]["aerolake:sample_count"] == 128
+    assert completed["global"]["aerolake:signal_type"] == (
+        "<missing:aerolake:signal_type>"
+    )
+    assert completed["captures"][0]["core:frequency"] == 1_000_000
 
 
 def test_ingest_sigmf_pair_rejects_mismatched_sha512(
@@ -437,16 +456,10 @@ def test_ingest_sigmf_pair_rejects_mismatched_sha512(
     data_path.write_bytes(samples.tobytes())
     meta_path.write_text(
         json.dumps(
-            {
-                "global": {
-                    "core:datatype": "cf32_le",
-                    "core:sample_rate": 2_000_000,
-                    "core:sha512": "0" * 128,
-                    "aerolake:signal_type": "gnss_l1",
-                },
-                "captures": [{"core:sample_start": 0, "core:frequency": 1_876_954_000}],
-                "annotations": [],
-            }
+            _canonical_meta(
+                center_freq=1_876_954_000,
+                **{"core:sha512": "0" * 128},
+            )
         )
     )
 
@@ -467,16 +480,7 @@ def test_ingest_sigmf_pair_generates_iqengine_sidecars(
     data_path.write_bytes(samples.tobytes())
     meta_path.write_text(
         json.dumps(
-            {
-                "global": {
-                    "core:datatype": "cf32_le",
-                    "core:sample_rate": 2_000_000,
-                    "core:version": "1.2.3",
-                    "aerolake:signal_type": "gnss_l1",
-                },
-                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
-                "annotations": [],
-            }
+            _canonical_meta(**{"core:version": "1.2.3"})
         )
     )
 
@@ -664,16 +668,10 @@ def test_ingest_cli_uses_existing_sigmf_meta_when_no_metadata_flags(
     path.write_bytes(np.ones(4096, dtype=np.complex64).tobytes())
     meta_path.write_text(
         json.dumps(
-            {
-                "global": {
-                    "core:datatype": "cf32_le",
-                    "core:sample_rate": 2_000_000,
-                    "core:version": "1.2.3",
-                    "aerolake:signal_type": "gnss_l1",
-                },
-                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
-                "annotations": [{"core:sample_start": 0, "core:label": "kept"}],
-            }
+            _canonical_meta(
+                annotations=[{"core:sample_start": 0, "core:label": "kept"}],
+                **{"core:version": "1.2.3"},
+            )
         )
     )
 
@@ -698,15 +696,7 @@ def test_ingest_cli_can_ensure_sha512_for_existing_sigmf_pair(
     path.write_bytes(samples.tobytes())
     meta_path.write_text(
         json.dumps(
-            {
-                "global": {
-                    "core:datatype": "cf32_le",
-                    "core:sample_rate": 2_000_000,
-                    "aerolake:signal_type": "gnss_l1",
-                },
-                "captures": [{"core:sample_start": 0, "core:frequency": 1_575_420_000}],
-                "annotations": [],
-            }
+            _canonical_meta(annotations=[])
         )
     )
 

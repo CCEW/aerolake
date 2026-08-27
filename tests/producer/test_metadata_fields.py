@@ -33,6 +33,7 @@ def _tone():
 def test_encode_writes_aerolake_fields() -> None:
     cap = encode(
         _tone(),
+        author="Camila Nino Francia",
         signal_type="gnss_l1",
         operator="schmitt",
         location="roof",
@@ -40,7 +41,7 @@ def test_encode_writes_aerolake_fields() -> None:
     )
     g = json.loads(cap.meta_bytes)["global"]
     assert g["aerolake:signal_type"] == "gnss_l1"
-    assert g["aerolake:operator"] == "schmitt"
+    assert g["aerolake:operator"] == "Camila Nino Francia"
     assert g["aerolake:location"] == "roof"
     assert g["aerolake:mobile"] is True
 
@@ -81,7 +82,7 @@ def test_encode_still_valid_sigmf_with_namespace() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_capture_defaults_operator_to_session(storage_client: StorageClient, monkeypatch) -> None:
+def test_capture_defaults_operator_to_author(storage_client: StorageClient, monkeypatch) -> None:
     monkeypatch.setattr("getpass.getuser", lambda: "alice")
     result = capture_and_upload(
         signal_type="gnss_l1",
@@ -92,10 +93,10 @@ def test_capture_defaults_operator_to_session(storage_client: StorageClient, mon
     )
     reader = CaptureReader(storage_client)
     tags = reader.inspect(result.data_key).tags
-    assert tags["operator"] == "alice"
+    assert tags["operator"] == "AeroLake"
 
 
-def test_capture_explicit_operator_wins(storage_client: StorageClient, monkeypatch) -> None:
+def test_capture_operator_matches_author(storage_client: StorageClient, monkeypatch) -> None:
     monkeypatch.setattr("getpass.getuser", lambda: "alice")
     result = capture_and_upload(
         signal_type="gnss_l1",
@@ -107,7 +108,7 @@ def test_capture_explicit_operator_wins(storage_client: StorageClient, monkeypat
     )
     reader = CaptureReader(storage_client)
     tags = reader.inspect(result.data_key).tags
-    assert tags["operator"] == "bob"
+    assert tags["operator"] == "AeroLake"
 
 
 def test_capture_writes_mobile_tag(
@@ -143,7 +144,7 @@ def test_capture_metadata_reaches_sigmf(
     raw = storage_client.download_bytes(result.meta_key)
     g = json.loads(raw)["global"]
     assert g["aerolake:signal_type"] == "iridium"
-    assert g["aerolake:operator"] == "schmitt"
+    assert g["aerolake:operator"] == "AeroLake"
     assert g["aerolake:location"] == "lab_a"
     assert g["aerolake:mobile"] is False
 

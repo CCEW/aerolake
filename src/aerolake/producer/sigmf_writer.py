@@ -110,6 +110,231 @@ class SigMFCapture:
     meta_bytes: bytes
 
 
+def build_metadata(
+    *,
+    sample_count: int,
+    sample_rate: float,
+    center_freq: float,
+    capture_datetime: str,
+    data_sha512: str | None = None,
+    author: str = "AeroLake",
+    description: str = "AeroLake IQ capture",
+    recorder: str = "aerolake-ingest",
+    hardware: str = "unknown",
+    signal_type: str | None = None,
+    operator: str | None = None,
+    location: str | None = None,
+    mobile: bool = False,
+    signal_type_detail: str | None = None,
+    hardware_info: dict[str, str] | None = None,
+    overflow_count: int | None = None,
+    license: str | None = None,
+    geolocation: dict[str, object] | None = None,
+    annotation: AnnotationFields | None = None,
+    antenna: AntennaFields | None = None,
+) -> dict[str, object]:
+    """Build the canonical AeroLake SigMF metadata structure.
+
+    Capture and ingest both use this function. The data hash is optional while
+    a streamed upload is in progress and is added before the final meta upload.
+    """
+    global_block: dict[str, object] = {
+        "core:datatype": SIGMF_DATATYPE_CF32_LE,
+        "core:sample_rate": float(sample_rate),
+        "core:author": author,
+        "core:description": description,
+        "core:recorder": recorder,
+        "core:hw": hardware,
+        "core:version": SIGMF_VERSION,
+        "core:num_channels": 1,
+        "core:offset": 0,
+        "aerolake:duration_s": sample_count / sample_rate if sample_rate > 0 else 0.0,
+        "aerolake:sample_count": sample_count,
+        "aerolake:operator": author,
+        "aerolake:mobile": bool(mobile),
+    }
+    if data_sha512 is not None:
+        global_block["core:sha512"] = data_sha512
+    if signal_type is not None:
+        global_block["aerolake:signal_type"] = signal_type
+    if signal_type_detail is not None:
+        global_block["aerolake:signal_type_detail"] = signal_type_detail
+    if location is not None:
+        global_block["aerolake:location"] = location
+    if hardware_info:
+        global_block["aerolake:hardware_info"] = hardware_info
+    if overflow_count is not None:
+        global_block["aerolake:overflow_count"] = overflow_count
+    if license is not None:
+        global_block["core:license"] = license
+
+    if antenna:
+        for key, value in antenna.items():
+            if value is not None:
+                global_block[f"antenna:{key}"] = value
+
+    antenna_in_annotation = annotation is not None and any(
+        key in annotation for key in ("polarization", "azimuth_angle", "elevation_angle")
+    )
+    extensions: list[dict[str, object]] = [
+        {"name": "aerolake", "version": "1.0.0", "optional": True}
+    ]
+    if antenna or antenna_in_annotation:
+        extensions.append({"name": "antenna", "version": "1.0.0", "optional": True})
+    global_block["core:extensions"] = extensions
+
+    capture_segment: dict[str, object] = {
+        "core:sample_start": 0,
+        "core:frequency": float(center_freq),
+        "core:datetime": capture_datetime,
+    }
+    if geolocation is not None:
+        capture_segment["core:geolocation"] = geolocation
+
+    annotations: list[dict[str, object]] = []
+    if annotation:
+        annotation_segment: dict[str, object] = {
+            "core:sample_start": 0,
+            "core:sample_count": sample_count,
+        }
+        if "label" in annotation:
+            annotation_segment["core:label"] = annotation["label"]
+        if "comment" in annotation:
+            annotation_segment["core:comment"] = annotation["comment"]
+        if "freq_lower_edge" in annotation and "freq_upper_edge" in annotation:
+            annotation_segment["core:freq_lower_edge"] = annotation["freq_lower_edge"]
+            annotation_segment["core:freq_upper_edge"] = annotation["freq_upper_edge"]
+        for key in ("polarization", "azimuth_angle", "elevation_angle"):
+            if key in annotation:
+                annotation_segment[f"antenna:{key}"] = annotation[key]
+        annotations.append(annotation_segment)
+
+    metadata: dict[str, object] = {
+        "global": global_block,
+        "captures": [capture_segment],
+        "annotations": annotations,
+    }
+    SigMFFile(metadata=metadata).validate()
+    return metadata
+
+
+def missing_canonical_fields(metadata: dict[str, object]) -> list[str]:
+    """Return required canonical fields absent from an existing SigMF pair."""
+    global_meta = metadata.get("global")
+    captures = metadata.get("captures")
+    first_capture = captures[0] if isinstance(captures, list) and captures else None
+    missing: list[str] = []
+    required_global = (
+        "core:datatype",
+        "core:sample_rate",
+        "core:author",
+        "core:description",
+        "core:recorder",
+        "core:hw",
+        "core:version",
+        "core:num_channels",
+        "core:offset",
+        "core:extensions",
+        "aerolake:signal_type",
+        "aerolake:operator",
+        "aerolake:mobile",
+        "aerolake:duration_s",
+        "aerolake:sample_count",
+    )
+    if not isinstance(global_meta, dict):
+        return [f"global.{field}" for field in required_global] + [
+            "captures[0].core:sample_start",
+            "captures[0].core:frequency",
+            "captures[0].core:datetime",
+        ]
+    missing.extend(
+        f"global.{field}"
+        for field in required_global
+        if field not in global_meta or _is_missing_placeholder(global_meta[field])
+    )
+    if not isinstance(first_capture, dict):
+        missing.extend(
+            [
+                "captures[0].core:sample_start",
+                "captures[0].core:frequency",
+                "captures[0].core:datetime",
+            ]
+        )
+    else:
+        missing.extend(
+            f"captures[0].{field}"
+            for field in ("core:sample_start", "core:frequency", "core:datetime")
+            if field not in first_capture or _is_missing_placeholder(first_capture[field])
+        )
+    if "annotations" not in metadata or _is_missing_placeholder(metadata["annotations"]):
+        missing.append("annotations")
+    return missing
+
+
+def _is_missing_placeholder(value: object) -> bool:
+    """Recognize placeholders written into an incomplete local metadata file."""
+    return isinstance(value, str) and value.startswith("<missing:") and value.endswith(">")
+
+
+def complete_canonical_metadata(
+    metadata: dict[str, object],
+    *,
+    sample_count: int | None = None,
+) -> list[str]:
+    """Fill safe defaults and mark unresolved canonical fields for user editing."""
+    global_meta = metadata.setdefault("global", {})
+    if not isinstance(global_meta, dict):
+        global_meta = {}
+        metadata["global"] = global_meta
+    captures = metadata.setdefault("captures", [])
+    if not isinstance(captures, list):
+        captures = []
+        metadata["captures"] = captures
+    if not captures or not isinstance(captures[0], dict):
+        captures[:] = [{}]
+    first_capture = captures[0]
+
+    sample_rate = global_meta.get("core:sample_rate")
+    center_freq = first_capture.get("core:frequency")
+    description = "AeroLake IQ capture"
+    if isinstance(sample_rate, (int, float)) and isinstance(center_freq, (int, float)):
+        description = (
+            f"Ingested capture at {float(sample_rate) / 1e6:.3f} MS/s, "
+            f"{float(center_freq) / 1e6:.3f} MHz"
+        )
+    defaults: dict[str, object] = {
+        "core:author": "AeroLake",
+        "core:description": description,
+        "core:recorder": "external-sigmf",
+        "core:hw": "unknown",
+        "core:version": SIGMF_VERSION,
+        "core:num_channels": 1,
+        "core:offset": 0,
+        "core:extensions": [{"name": "aerolake", "version": "1.0.0", "optional": True}],
+        "aerolake:operator": str(global_meta.get("core:author") or "AeroLake"),
+        "aerolake:mobile": False,
+        "aerolake:signal_type": "<missing:aerolake:signal_type>",
+    }
+    for field, value in defaults.items():
+        global_meta.setdefault(field, value)
+    global_meta["aerolake:operator"] = str(global_meta.get("core:author") or "AeroLake")
+    if sample_count is not None:
+        global_meta.setdefault("aerolake:sample_count", sample_count)
+        if isinstance(sample_rate, (int, float)) and sample_rate > 0:
+            global_meta.setdefault("aerolake:duration_s", sample_count / float(sample_rate))
+        else:
+            global_meta.setdefault("aerolake:duration_s", "<missing:aerolake:duration_s>")
+    else:
+        global_meta.setdefault("aerolake:sample_count", "<missing:aerolake:sample_count>")
+        global_meta.setdefault("aerolake:duration_s", "<missing:aerolake:duration_s>")
+
+    first_capture.setdefault("core:sample_start", 0)
+    first_capture.setdefault("core:datetime", "<missing:captures[0].core:datetime>")
+    first_capture.setdefault("core:frequency", "<missing:captures[0].core:frequency>")
+    metadata.setdefault("annotations", [])
+    return missing_canonical_fields(metadata)
+
+
 def encode(
     signal: EncodableSignal,
     *,
@@ -156,135 +381,28 @@ def encode(
     # tobytes() gives us exactly the bytes SigMF expects for cf32_le.
     data_bytes = signal.samples.tobytes()
 
-    # --- 2. Build the metadata dict per SigMF v1.0.0 spec ------------------
-    # AeroLake namespace: lab-specific, discovery-oriented fields. SigMF leaves
-    # domain fields open; we prefix ours with "aerolake:" so they coexist with
-    # core: without clashing. Duration is always derived (never hand-entered).
-    # Optional fields are omitted when absent, so "no location" is a real
-    # absence rather than an empty string.
-    sample_rate = float(signal.sample_rate)
-    duration_s = len(signal.samples) / sample_rate if sample_rate > 0 else 0.0
-    global_block: dict[str, object] = {
-        "core:datatype": SIGMF_DATATYPE_CF32_LE,
-        "core:sample_rate": sample_rate,
-        "core:author": author,
-        "core:description": description if description is not None else signal.description,
-        "core:recorder": recorder,
-        "core:hw": hardware,
-        "core:version": SIGMF_VERSION,
-        # SigMF integrity + structural fields. sha512 is the hash of the raw
-        # .sigmf-data bytes (lets a consumer verify the data wasn't corrupted);
-        # num_channels=1 (single interleaved IQ stream) and offset=0 (first
-        # sample index) are written explicitly rather than left to defaults.
-        "core:num_channels": 1,
-        "core:offset": 0,
-        "core:sha512": hashlib.sha512(data_bytes).hexdigest(),
-        "aerolake:duration_s": duration_s,
-        "aerolake:sample_count": len(signal.samples),
-    }
-    # A license URL is optional; include it only when the user supplied one.
-    if license is not None:
-        global_block["core:license"] = license
-    if signal_type is not None:
-        global_block["aerolake:signal_type"] = signal_type
-    if signal_type_detail is not None:
-        global_block["aerolake:signal_type_detail"] = signal_type_detail
-    if operator is not None:
-        global_block["aerolake:operator"] = operator
-    if location is not None:
-        global_block["aerolake:location"] = location
-    if mobile is not None:
-        global_block["aerolake:mobile"] = bool(mobile)
-    # Full hardware provenance as reported by the SDR (manufacturer,
-    # product, tuner, label, ...). Stored as a sub-object so it works for
-    # any device without knowing its keys in advance. Absent for synthetic.
-    if hardware_info:
-        global_block["aerolake:hardware_info"] = hardware_info
-    # Number of stream overflows during capture: 0 means a clean, gapless
-    # recording; >0 means some samples were dropped (USB/host hiccups) and the
-    # capture may contain discontinuities. None for synthetic (not applicable).
-    if overflow_count is not None:
-        global_block["aerolake:overflow_count"] = overflow_count
-
-    # Antenna extension (Global scope): map each supplied scalar to
-    # antenna:<key>. The model is the spec's required field and is always
-    # present when an antenna block exists. Booleans are normalized.
-    antenna_used = bool(antenna)
-    if antenna:
-        for key, value in antenna.items():
-            if value is not None:
-                global_block[f"antenna:{key}"] = value
-
-    # The antenna extension is also "in use" if pointing fields ride in the
-    # annotation (polarization/azimuth/elevation are antenna:* keys). Declare
-    # it whenever any antenna:* key appears anywhere, or the file is
-    # non-compliant (undeclared extension in use).
-    antenna_in_annotation = annotation is not None and any(
-        k in annotation for k in ("polarization", "azimuth_angle", "elevation_angle")
+    metadata = build_metadata(
+        sample_count=len(signal.samples),
+        sample_rate=signal.sample_rate,
+        center_freq=signal.center_freq,
+        capture_datetime=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        data_sha512=hashlib.sha512(data_bytes).hexdigest(),
+        author=author,
+        description=description if description is not None else signal.description,
+        recorder=recorder,
+        hardware=hardware,
+        signal_type=signal_type,
+        operator=operator if operator is not None else "unknown",
+        location=location,
+        mobile=mobile if mobile is not None else False,
+        signal_type_detail=signal_type_detail,
+        hardware_info=hardware_info,
+        overflow_count=overflow_count,
+        license=license,
+        geolocation=geolocation,
+        annotation=annotation,
+        antenna=antenna,
     )
-
-    # Declare the aerolake namespace as a SigMF extension. The spec requires
-    # any custom "<name>:" field to be declared here; without this, current
-    # SigMF warns and future versions reject the file. optional=True: readers
-    # that don't know the extension can still decode the IQ.
-    extensions: list[dict[str, object]] = [
-        {"name": "aerolake", "version": "1.0.0", "optional": True}
-    ]
-    # The antenna extension is canonical in SigMF; declare it too whenever any
-    # antenna field is present (Global scalars or annotation pointing), so the
-    # antenna:* keys are spec-compliant.
-    if antenna_used or antenna_in_annotation:
-        extensions.append({"name": "antenna", "version": "1.0.0", "optional": True})
-    global_block["core:extensions"] = extensions
-
-    # --- Captures segment -------------------------------------------------
-    # frequency and datetime were already standard here. geolocation is the
-    # spec's preferred scope for position (over the Global object), so it goes
-    # in the capture segment when provided. SigMF requires the UTC offset to be
-    # written as "Z", not "+00:00".
-    capture_segment: dict[str, object] = {
-        "core:sample_start": 0,
-        "core:frequency": float(signal.center_freq),
-        "core:datetime": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-    }
-    if geolocation is not None:
-        capture_segment["core:geolocation"] = geolocation
-
-    # --- Annotations ------------------------------------------------------
-    # A single annotation covering the whole capture is emitted only if the
-    # user supplied any annotation field. sample_start/sample_count anchor it
-    # to the full recording. The freq edges are a pair (both or neither,
-    # enforced upstream). polarization/azimuth/elevation live here per spec.
-    annotations: list[dict[str, object]] = []
-    if annotation:
-        ann_segment: dict[str, object] = {
-            "core:sample_start": 0,
-            "core:sample_count": len(signal.samples),
-        }
-        if "label" in annotation:
-            ann_segment["core:label"] = annotation["label"]
-        if "comment" in annotation:
-            ann_segment["core:comment"] = annotation["comment"]
-        if "freq_lower_edge" in annotation and "freq_upper_edge" in annotation:
-            ann_segment["core:freq_lower_edge"] = annotation["freq_lower_edge"]
-            ann_segment["core:freq_upper_edge"] = annotation["freq_upper_edge"]
-        for ant_key in ("polarization", "azimuth_angle", "elevation_angle"):
-            if ant_key in annotation:
-                ann_segment[f"antenna:{ant_key}"] = annotation[ant_key]
-        annotations.append(ann_segment)
-
-    metadata = {
-        "global": global_block,
-        "captures": [capture_segment],
-        "annotations": annotations,
-    }
-
-    # --- 3. Validate against the SigMF schema ------------------------------
-    # The library raises if the structure or required fields are wrong.
-    # Catching mistakes here means we never write a non-compliant capture
-    # to MinIO.
-    sigmf_file = SigMFFile(metadata=metadata)
-    sigmf_file.validate()
 
     # --- 4. Serialize metadata as human-readable JSON ----------------------
     # indent=2 + sort_keys=True makes the output diff-friendly and
