@@ -1,0 +1,35 @@
+{
+  "global": {
+    "core:datatype": "cf32_le",
+    "core:sample_rate": 2000000,
+    "core:author": "Intern Name",
+    "core:description": "GNSS L1 rooftop capture",
+    "core:recorder": "GNU Radio",
+    "core:hw": "bladerf",
+    "core:version": "1.2.6",
+    "core:num_channels": 1,
+    "core:offset": 0,
+    "core:sha512": "REPLACE_WITH_SHA512_OF_CAPTURE_SIGMF_DATA",
+    "aerolake:signal_type": "gnss_l1",
+    "aerolake:operator": "Intern Name",
+    "aerolake:location": "LASSENA rooftop",
+    "aerolake:mobile": false,
+    "aerolake:duration_s": 10,
+    "aerolake:sample_count": 20000000,
+    "core:extensions": [
+      {
+        "name": "aerolake",
+        "version": "1.0.0",
+        "optional": true
+      }
+    ]
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 1575420000,
+      "core:datetime": "2026-08-27T14:30:00Z"
+    }
+  ],
+  "annotations": []
+}

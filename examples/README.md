@@ -27,6 +27,12 @@ Templates provided:
 - **`test-complet.toml`** — a real RTL-SDR bench capture, ready to run.
 - **`capture.example.json` / `capture.full.json`** — the JSON equivalents
   (`capture.full.json` shows every supported field at once).
+- **`capture.sigmf-meta.example.json`** — a final, manually editable SigMF
+  metadata file for an existing `.sigmf-data` recording. The data and metadata
+  must have the same basename.
+- **`short_24lines.ingest.sigmf-meta.example.json`** — an example of the
+  metadata produced when the supplied `short_24lines.sigmf-data` is ingested
+  with the values from its original metadata.
 
 The TOML templates document each field inline; the same fields are also tabulated
 below (they apply to both formats).
@@ -65,7 +71,40 @@ Synthetic (for testing without hardware):
 
 If `source` is omitted entirely, a synthetic source is used by default.
 
-## Descriptive metadata (optional)
+## SigMF metadata and defaults
+
+The capture path and the ingest path use the same canonical SigMF metadata
+schema. Capture fills it automatically; raw-file ingest fills the same fields
+with defaults and then adds the SHA-512 hash after the data has been streamed.
+The final metadata file is readable in
+`capture.sigmf-meta.example.json`.
+
+These fields are always saved in a canonical capture:
+
+| Field | Default / source |
+|---|---|
+| `core:datatype` | `cf32_le` (the normalized stored IQ format) |
+| `core:sample_rate` | Capture setting |
+| `core:author` | `AeroLake` |
+| `core:description` | Capture description or generated ingest description |
+| `core:recorder` | Capture recorder or `aerolake-ingest` |
+| `core:hw` | SDR name, or `unknown` |
+| `core:version` | Current SigMF library specification version |
+| `core:num_channels` | `1` |
+| `core:offset` | `0` |
+| `core:sha512` | Computed from the exact stored `.sigmf-data` bytes |
+| `core:extensions` | `aerolake` extension, plus `antenna` when used |
+| `aerolake:signal_type` | Capture setting; required for an existing pair |
+| `aerolake:operator` | Same value as `core:author` |
+| `aerolake:mobile` | `false` unless the receiver is moving |
+| `aerolake:duration_s` | Derived from sample count and sample rate |
+| `aerolake:sample_count` | Derived from the data size |
+| `captures[0].core:sample_start` | `0` |
+| `captures[0].core:frequency` | Center-frequency setting |
+| `captures[0].core:datetime` | Capture start time in UTC |
+| `annotations` | `[]`, or generated analysis annotations |
+
+The following descriptive fields are optional, but are written when supplied:
 
 These go into the SigMF `global` object.
 
@@ -75,7 +114,60 @@ These go into the SigMF `global` object.
 | `author` | string | `core:author` | Who recorded it (name, handle, email…). |
 | `description` | string | `core:description` | Free-text description of the recording. |
 | `license` | string (URL) | `core:license` | License URL the recording is offered under. |
-| `operator` | string | `aerolake:operator` | Operator id. If omitted, defaults to your login. |
+| `operator` | derived | `aerolake:operator` | Always copied from `author`; it identifies the recording owner/operator. |
+| `location.name` | string | `aerolake:location` | Human-readable recording location. |
+| `location.mobile` | boolean | `aerolake:mobile` | Whether the receiver was moving. Defaults to `false`. |
+| `hardware_info` | object | `aerolake:hardware_info` | Device details reported by the SDR. |
+| `overflow_count` | integer | `aerolake:overflow_count` | Dropped samples reported by the SDR. |
+
+## Ingesting a file manually
+
+For a GNU Radio `.sigmf-data` file, either create the matching metadata by
+copying `capture.sigmf-meta.example.json`, or let raw ingest create it:
+
+```bash
+uv run aerolake-ingest capture.sigmf-data \
+  --signal-type gnss_l1 --sample-rate 2e6 \
+  --center-freq 1575.42e6 --hardware bladerf
+```
+
+For the supplied `short_24lines.sigmf-data`, the equivalent generated-meta
+command would be:
+
+```bash
+uv run aerolake-ingest /mnt/d/sigmf/short_24lines.sigmf-data \
+  --signal-type iridium --sample-rate 10e6 \
+  --center-freq 1622e6 --datatype ci16_le --hardware rfsoc
+```
+
+This converts the source `ci16_le` samples to stored `cf32_le`. The resulting
+metadata shape is shown in `short_24lines.ingest.sigmf-meta.example.json`.
+The sample count, duration, and SHA-512 are calculated from the data; the
+capture timestamp is the ingest time. The CLI does not prompt for missing
+values: `--signal-type`, `--sample-rate`, and `--center-freq` are required, and
+`--datatype`/`--hardware` use defaults when omitted. Other generated values use
+the canonical defaults listed above.
+
+Because `short_24lines.sigmf-meta` already exists beside the data, running the
+path with no metadata flags selects existing-pair mode instead. That mode does
+not infer or prompt for fields; it validates the companion metadata and reports
+all missing canonical fields before upload. To use the existing pair, complete
+those fields first, or use the generated-meta command above when the original
+metadata is only a partial record.
+
+If a matching `.sigmf-meta` already exists, ingest it as a pair. It must contain
+all canonical fields listed above, except `core:sha512`, which AeroLake can
+calculate. If fields are missing, ingest stops before upload and prints the
+complete list, for example:
+
+```text
+Existing SigMF metadata is missing required canonical fields: global.core:author, global.aerolake:operator
+```
+
+Edit the generated local metadata file and run ingest again. `antenna:*` fields
+and manual annotations are optional. For supported analysis workflows,
+annotations can also be generated during ingest (for example with
+`--iridium-annotate`).
 
 ## Location (optional)
 

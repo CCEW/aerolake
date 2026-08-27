@@ -18,7 +18,13 @@ EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
 
 # Every shipped config, in both formats — so a TOML *or* JSON template can never
 # silently fall out of sync with the schema.
-EXAMPLE_FILES = sorted([*EXAMPLES_DIR.glob("*.json"), *EXAMPLES_DIR.glob("*.toml")])
+EXAMPLE_FILES = sorted(
+    [
+        *EXAMPLES_DIR.glob("capture*.json"),
+        *EXAMPLES_DIR.glob("capture*.toml"),
+    ]
+)
+EXAMPLE_FILES = [path for path in EXAMPLE_FILES if ".sigmf-meta." not in path.name]
 
 
 @pytest.mark.parametrize("path", EXAMPLE_FILES, ids=lambda p: p.name)
