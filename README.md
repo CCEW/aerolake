@@ -45,11 +45,23 @@ See ADR-013 for the details of that refocus.
     uv run aerolake-healthcheck
     uv run aerolake-capture --config examples/capture.example.toml   # TOML (recommended) or JSON
     uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6
+    uv run aerolake-ingest capture.sigmf-data --iqengine              # existing capture.sigmf-meta beside it
     uv run aerolake-list --signal-type gnss_l1
     uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campaign" --description "..."
     uv run aerolake-play --prefix gnss_l1/
     uv run aerolake-stream --prefix gnss_l1/
     uv run aerolake-subscribe --address tcp://localhost:5555
+
+See `docs/cli-reference.md` for command details, especially the
+`aerolake-ingest` variants: generated metadata, existing SigMF pairs,
+IQEngine sidecars, and Iridium annotation.
+
+In both ingest modes, AeroLake completes a pre-upload checklist. Raw source
+formats are validated and converted to normalized `cf32_le`. Existing SigMF
+pairs are parsed and validated, checked for sample alignment, verified against
+any existing `core:sha512`, enriched with a missing hash, and converted from
+`ci16_le` when necessary. The hash in uploaded metadata always describes the
+stored bytes; local source files are not modified.
 
 Capture config files are written in **TOML (recommended — comments allowed) or
 JSON**, selected by the file extension; commented templates live in

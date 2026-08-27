@@ -81,7 +81,7 @@ over **as soon as the IQ file exists**:
 # 1. Ingestion: IQ file -> SigMF -> MinIO (multipart) with tags
 uv run aerolake-ingest <file.iq> \
     --signal-type iridium --sample-rate 400e3 --center-freq 1626.271e6 \
-    --hardware rfsoc --datatype <cf32|cs16|cu8>     # depending on the software's output
+   --hardware rfsoc --datatype <cf32|cs16|ci16_le|cu8>  # source format
 
 # 2. Quality validation + tag promotion
 uv run aerolake-validate --prefix iridium/ --expected-duration <duration_s>
@@ -90,9 +90,14 @@ uv run aerolake-validate --prefix iridium/ --expected-duration <duration_s>
 uv run --group gui aerolake-gui
 ```
 
-> ❓ **To confirm**: the **output format** of the RFSoC acquisition software
-> (cf32? cs16? cu8?) — it determines the `--datatype` of the ingestion. Our
-> ingest converts everything to normalised cf32.
+> The `--datatype` value describes the RFSoC file's source format. AeroLake
+> validates sample alignment, streams the file, and stores normalized
+> `cf32_le`; integer inputs such as `ci16_le` are converted during ingest.
+
+If the RFSoC software already writes a SigMF pair, ingest it without metadata
+flags. AeroLake validates the pair, verifies or adds `core:sha512`, converts a
+declared `ci16_le` pair to `cf32_le`, and uploads the metadata before the data.
+The local pair is not modified.
 
 ## 7. Questions to clarify before the test
 

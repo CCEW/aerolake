@@ -438,8 +438,26 @@ uv run aerolake-ingest capture.bin --signal-type gnss_l1 \
 ```
 
 Accepts a file **or a folder** of RFSoC packets (`RX0_pkt_*.bin`, concatenated
-in numeric order); formats `cf32/cu8/cs16/cs32` (converted and normalised to
-cf32); the upload is streamed (bounded RAM whatever the size).
+in numeric order). Raw ingest accepts `cf32`, `cu8`, `cs16`, `ci16_le`, and
+`cs32`; all inputs are converted and normalized to stored `cf32_le`, and the
+upload is streamed with bounded memory.
+
+For an existing `capture.sigmf-data` / `capture.sigmf-meta` pair, omit the
+metadata flags:
+
+```bash
+uv run aerolake-ingest capture.sigmf-data --iqengine
+```
+
+Before uploading, the pair-ingest checklist validates the SigMF JSON, checks
+sample-byte alignment, verifies an existing `global.core:sha512`, adds a
+missing hash, converts declared `ci16_le` data to `cf32_le`, and canonicalizes
+legacy `cf32` metadata to `cf32_le`. The uploaded hash always describes the
+stored bytes; local files are not modified. `global.aerolake:signal_type` is
+required: if it is absent, ingest stops and asks the operator to indicate the
+signal type before retrying. This value controls both the `signal-type` label
+and the bucket prefix. Existing-pair mode accepts `cf32`, `cf32_le`, and
+`ci16_le`.
 
 ## 4.6 Group a campaign into a collection
 
@@ -670,7 +688,7 @@ new ADR.**
 
 ## 8.2 ⚠ Blocked / pending (unblock these FIRST)
 
-1. **S3 rights on FAST** — the access key sees the buckets (`raw-data`,
+1. ✅**S3 rights on FAST** — the access key sees the buckets (`raw-data`,
    `data-parquet`) but has **no rights** (AccessDenied on read AND write).
    **Ask Abdu** for a read/write policy (Put/Get/DeleteObject, ListBucket,
    Get/PutObjectTagging, multipart) on an `aerolake-captures` bucket OR a
@@ -764,7 +782,7 @@ tagging** (verified), and the discovery layer relies on tags (ADR-003).
 
 - **Supervisor / FAST admin**: Abdu (Abdessamad Amrhar) — accesses, S3 rights,
   CA certificate.
-- **RF branch / GNU Radio**: Camila.
+- **RF branch / GNU Radio**: Camila Nino Francia — camila.francia2004@gmail.com (feeding the lakehouse).
 - **Author**: Théo Schmitt — theo.schmitt02@gmail.com (archaeology questions
   only: everything necessary is supposed to be in this document — if something
   is missing, that's a handoff bug; fix it in `docs/handoff-document.md`).
