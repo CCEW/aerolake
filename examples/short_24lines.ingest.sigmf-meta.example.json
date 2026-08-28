@@ -2,30 +2,31 @@
   "global": {
     "core:author": "AeroLake",
     "core:datatype": "cf32_le",
+    "core:sample_rate": 10000000.0,
     "core:description": "Ingested ci16_le capture at 10.000 MS/s, 1622.000 MHz",
+    "core:recorder": "aerolake-ingest",
+    "core:hw": "rfsoc",
+    "core:version": "1.2.6",
+    "core:num_channels": 1,
+    "core:offset": 0,
     "core:extensions": [
       {
         "name": "aerolake",
-        "optional": true,
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "optional": true
       }
     ],
-    "core:hw": "rfsoc",
-    "core:num_channels": 1,
-    "core:offset": 0,
-    "core:recorder": "aerolake-ingest",
-    "core:sample_rate": 10000000.0,
     "core:sha512": "COMPUTED_FROM_NORMALIZED_CF32_LE_DATA_BYTES",
-    "core:version": "1.2.6",
     "aerolake:duration_s": "DATA_FILE_SIZE_DIVIDED_BY_4_AND_10000000",
     "aerolake:mobile": false,
-    "aerolake:operator": "AeroLake",
+    "aerolake:operator": "Wissem",
+    "aerolake:location": "Flight test in Montreal, Canada",
     "aerolake:sample_count": "DATA_FILE_SIZE_IN_BYTES_DIVIDED_BY_4",
     "aerolake:signal_type": "iridium"
   },
   "captures": [
     {
-      "core:datetime": "INGEST_TIME_IN_UTC",
+      "core:datetime": "2026-07-20T00:00:00Z",
       "core:frequency": 1622000000.0,
       "core:sample_start": 0
     }
