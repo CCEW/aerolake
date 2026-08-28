@@ -101,6 +101,15 @@ class Settings(BaseSettings):
         gt=0,
         description="Timeout for one IQEngine API request in seconds.",
     )
+    iqengine_sync_interval_s: float = Field(
+        default=10800.0,
+        gt=0,
+        description="How long an IQEngine sync remains fresh, in seconds.",
+    )
+    iqengine_sync_state_path: str = Field(
+        default="",
+        description="Optional path for persisted IQEngine sync state; empty disables persistence.",
+    )
 
 
 @lru_cache(maxsize=1)

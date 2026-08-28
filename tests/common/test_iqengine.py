@@ -8,7 +8,12 @@ from urllib.error import HTTPError
 import pytest
 
 from aerolake.common.config import Settings
-from aerolake.common.iqengine import IQEngineClient, IQEngineError
+from aerolake.common.iqengine import (
+    CatalogResponse,
+    IQEngineCatalog,
+    IQEngineClient,
+    IQEngineError,
+)
 
 
 class _Response:
@@ -122,3 +127,39 @@ def test_http_error_is_wrapped() -> None:
 
     with pytest.raises(IQEngineError, match="HTTP 401"):
         IQEngineClient(_settings(), opener=opener).search()
+
+
+def test_catalog_normalizes_rows_and_triggers_one_lazy_sync(tmp_path) -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.sync_calls = 0
+
+        def sync(self):
+            self.sync_calls += 1
+            return CatalogResponse(200, {"status": "queued"})
+
+        def search(self, **filters):
+            assert filters == {"prefix": "iridium/", "signal_type": "iridium"}
+            return CatalogResponse(
+                200,
+                [{"file_path": "iridium/a/capture.sigmf-meta", "tags": {"signal-type": "iridium"}}],
+            )
+
+    settings = _settings(
+        iqengine_sync_interval_s=3600,
+        iqengine_sync_state_path=str(tmp_path / "sync-state.json"),
+    )
+    fake = FakeClient()
+    catalog = IQEngineCatalog(fake, settings)
+
+    result = catalog.search(prefix="iridium/", filters={"signal_type": "iridium"})
+
+    assert result.rows[0].data_key == "iridium/a/capture.sigmf-data"
+    assert result.rows[0].tags == {"signal-type": "iridium"}
+    assert result.stale is True
+    assert result.sync_in_flight is True
+
+    for _ in range(100):
+        if fake.sync_calls:
+            break
+    assert fake.sync_calls == 1

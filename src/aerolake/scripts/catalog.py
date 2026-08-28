@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from rich.console import Console
 from rich.table import Table
 
+from aerolake.common.config import get_settings
+from aerolake.common.iqengine import IQEngineCatalog, IQEngineError
 from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageClient, StorageError
 from aerolake.consumer.reader import CaptureReader
@@ -78,6 +80,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Output a JSON array instead of a human-readable table.",
+    )
+    parser.add_argument(
+        "--catalog",
+        choices=("auto", "minio", "iqengine"),
+        default="auto",
+        help="Catalog source: auto uses IQEngine when configured, otherwise MinIO.",
     )
     return parser
 
@@ -152,8 +160,13 @@ def _print_table(console: Console, rows: list[CaptureRow]) -> None:
     console.print(f"[bold]{len(rows)}[/] capture(s)")
 
 
-def main(argv: list[str] | None = None, *, reader: CaptureReader | None = None) -> int:
-    """Entry point. ``reader`` is injectable for testing (moto-backed)."""
+def main(
+    argv: list[str] | None = None,
+    *,
+    reader: CaptureReader | None = None,
+    catalog: IQEngineCatalog | None = None,
+) -> int:
+    """Entry point with IQEngine catalog integration and MinIO fallback."""
     args = _build_parser().parse_args(argv)
     # Route logs to stderr so stdout stays clean for the table / JSON result.
     configure_logging()
@@ -169,7 +182,8 @@ def main(argv: list[str] | None = None, *, reader: CaptureReader | None = None) 
             console.print(f"[bold red]✗ {exc}[/]")
         return 2
 
-    # Build the reader unless one was injected. Failure here is config -> 2.
+    # An injected reader keeps tests and callers deterministic on MinIO.
+    reader_was_injected = reader is not None
     if reader is None:
         try:
             reader = CaptureReader(StorageClient())
@@ -181,9 +195,40 @@ def main(argv: list[str] | None = None, *, reader: CaptureReader | None = None) 
                 console.print(f"[bold red]✗ Configuration error:[/] {exc}")
             return 2
 
-    # Run the listing. A listing failure is an infrastructure problem -> 1.
+    source = "minio"
+    stale = False
+    sync_in_flight = False
+    sync_error = None
     try:
+        use_iqengine = args.catalog == "iqengine" or (
+            args.catalog == "auto" and not reader_was_injected
+        )
+        if catalog is not None or (use_iqengine and get_settings().iqengine_url):
+            catalog = catalog or IQEngineCatalog()
+            query_filters = {key.replace("-", "_"): value for key, value in filters.items()}
+            result = catalog.search(prefix=args.prefix, filters=query_filters)
+            rows = [
+                CaptureRow(data_key=row.data_key, tags=row.tags, metadata=row.metadata)
+                for row in result.rows
+                if all(row.tags.get(key) == value for key, value in filters.items())
+            ]
+            source = "iqengine"
+            stale = result.stale
+            sync_in_flight = result.sync_in_flight
+            sync_error = result.sync_error
+        else:
+            rows = _list_matching(reader, prefix=args.prefix, filters=filters)
+    except IQEngineError as exc:
+        if args.catalog == "iqengine":
+            if args.json:
+                print(json.dumps({"status": "error", "error": str(exc)}))
+            else:
+                console.print(f"[bold red]✗ IQEngine error:[/] {exc}")
+            return 1
+        logger_message = f"IQEngine unavailable; using MinIO fallback: {exc}"
+        console.print(f"[yellow]{logger_message}[/]")
         rows = _list_matching(reader, prefix=args.prefix, filters=filters)
+        source = "minio-fallback"
     except StorageError as exc:
         if args.json:
             print(json.dumps({"status": "error", "error": str(exc)}))
@@ -203,6 +248,10 @@ def main(argv: list[str] | None = None, *, reader: CaptureReader | None = None) 
         print(
             json.dumps(
                 {
+                    "catalog": source,
+                    "stale": stale,
+                    "sync_in_flight": sync_in_flight,
+                    "sync_error": sync_error,
                     "prefix": args.prefix,
                     "filters": filters,
                     "total": len(rows),
@@ -218,6 +267,9 @@ def main(argv: list[str] | None = None, *, reader: CaptureReader | None = None) 
         suffix = " matching the filters" if filters else ""
         console.print(f"[yellow]No captures found{scope}{suffix}.[/]")
     else:
+        if source == "iqengine" and stale:
+            state = "sync in progress" if sync_in_flight else "sync pending"
+            console.print(f"[yellow]Catalog results are stale; {state}.[/]")
         _print_table(console, rows)
 
     return 0

@@ -37,6 +37,7 @@ import glob
 import os
 import re
 import sys
+from datetime import datetime
 
 from rich.console import Console
 from rich.table import Table
@@ -165,6 +166,7 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
         return 2
 
     what = files[0] if len(files) == 1 else f"{len(files)} files in {args.path}"
+    started_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     if generated_meta_mode:
         assert args.signal_type is not None
         assert args.sample_rate is not None
@@ -172,14 +174,17 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
         datatype = args.datatype or "cf32"
         hardware = args.hardware or "unknown"
         console.print(
-            f"[bold cyan]>[/] Ingesting [bold]{what}[/] as "
+            f"[dim][{started_at}][/dim] [bold cyan]>[/] Ingesting [bold]{what}[/] as "
             f"[bold]{args.signal_type}[/] ({datatype}, "
-            f"{args.sample_rate / 1e6:.3f} MS/s @ {args.center_freq / 1e6:.3f} MHz)..."
+            f"{args.sample_rate / 1e6:.3f} MS/s @ {args.center_freq / 1e6:.3f} MHz)"
+            + (f" [dim](annotations: {args.pypy})[/dim]" if args.iridium_annotate else "")
+            + "..."
         )
     else:
         console.print(
-            f"[bold cyan]>[/] Ingesting existing SigMF pair [bold]{what}[/] "
-            "using its .sigmf-meta..."
+            f"[dim][{started_at}][/dim] [bold cyan]>[/] Ingesting existing SigMF pair "
+            f"[bold]{what}[/] using its .sigmf-meta..."
+            + (f" [dim](annotations: {args.pypy})[/dim]" if args.iridium_annotate else "")
         )
 
     with console.status("[bold cyan]Ingesting...[/]", spinner="dots"):

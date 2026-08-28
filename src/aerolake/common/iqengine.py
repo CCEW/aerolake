@@ -10,6 +10,10 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from threading import Lock, Thread
+from time import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
@@ -32,6 +36,25 @@ class CatalogResponse:
 
     status_code: int
     body: Any
+
+
+@dataclass(frozen=True)
+class CatalogRow:
+    """A normalized read-only catalog result with MinIO object references."""
+
+    data_key: str
+    tags: dict[str, str]
+    metadata: dict[str, str]
+
+
+@dataclass(frozen=True)
+class CatalogSearchResult:
+    """Catalog rows plus the freshness/degraded state visible to callers."""
+
+    rows: list[CatalogRow]
+    stale: bool
+    sync_in_flight: bool
+    sync_error: str | None = None
 
 
 UrlOpener = Callable[..., Any]
@@ -154,3 +177,128 @@ class IQEngineClient:
             filepath=quote(filepath.strip("/"), safe="/"),
         )
         return self._request("GET", path)
+
+
+class IQEngineCatalog:
+    """AeroLake-owned freshness and degraded-mode facade for IQEngine.
+
+    This class orchestrates the supported API only. It does not access or
+    duplicate IQEngine's MongoDB catalog. Sync state is process-local unless a
+    state path is configured, and one background sync is allowed at a time.
+    """
+
+    def __init__(
+        self,
+        client: IQEngineClient | None = None,
+        settings: Settings | None = None,
+    ) -> None:
+        self._settings = settings or get_settings()
+        self._client = client or IQEngineClient(self._settings)
+        self._lock = Lock()
+        self._sync_in_flight = False
+        self._state: dict[str, Any] = self._read_state()
+
+    def _state_path(self) -> Path | None:
+        value = self._settings.iqengine_sync_state_path.strip()
+        return Path(value).expanduser() if value else None
+
+    def _read_state(self) -> dict[str, Any]:
+        path = self._state_path()
+        if path is None or not path.exists():
+            return {}
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _write_state(self) -> None:
+        path = self._state_path()
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self._state, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            logger.warning("iqengine.sync_state.write_failed", error=str(exc))
+
+    def _sync_worker(self) -> None:
+        started = time()
+        try:
+            response = self._client.sync()
+            with self._lock:
+                self._state.update(
+                    {
+                        "last_success_at": datetime.now(UTC).isoformat(),
+                        "last_status": response.body.get("status")
+                        if isinstance(response.body, dict)
+                        else response.status_code,
+                        "last_error": None,
+                        "last_duration_s": round(time() - started, 3),
+                    }
+                )
+                self._write_state()
+            logger.info("iqengine.sync.ok", duration_s=round(time() - started, 3))
+        except IQEngineError as exc:
+            with self._lock:
+                self._state["last_error"] = str(exc)
+                self._state["last_duration_s"] = round(time() - started, 3)
+                self._write_state()
+            logger.warning("iqengine.sync.failed", error=str(exc))
+        finally:
+            with self._lock:
+                self._sync_in_flight = False
+
+    def _ensure_fresh(self) -> tuple[bool, bool, str | None]:
+        last_success = self._state.get("last_success_at")
+        try:
+            age = time() - datetime.fromisoformat(last_success).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            age = float("inf")
+        stale = age >= self._settings.iqengine_sync_interval_s
+        with self._lock:
+            if stale and not self._sync_in_flight:
+                self._sync_in_flight = True
+                Thread(target=self._sync_worker, daemon=True).start()
+            return stale, self._sync_in_flight, self._state.get("last_error")
+
+    @staticmethod
+    def _records(body: Any) -> list[dict[str, Any]]:
+        if isinstance(body, list):
+            return [item for item in body if isinstance(item, dict)]
+        if isinstance(body, dict):
+            for key in ("results", "data", "captures", "records"):
+                value = body.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+        return []
+
+    @staticmethod
+    def _row(record: dict[str, Any]) -> CatalogRow | None:
+        raw_key = record.get("data_key") or record.get("file_path") or record.get("key")
+        if not isinstance(raw_key, str) or not raw_key:
+            return None
+        data_key = raw_key[:-len(".sigmf-meta")] + ".sigmf-data" if raw_key.endswith(".sigmf-meta") else raw_key
+        tags = record.get("tags")
+        metadata = record.get("metadata")
+        return CatalogRow(
+            data_key=data_key,
+            tags={str(k): str(v) for k, v in tags.items()} if isinstance(tags, dict) else {},
+            metadata={str(k): str(v) for k, v in metadata.items()}
+            if isinstance(metadata, dict)
+            else {},
+        )
+
+    def search(self, *, prefix: str = "", filters: Mapping[str, object] | None = None) -> CatalogSearchResult:
+        stale, in_flight, sync_error = self._ensure_fresh()
+        query = dict(filters or {})
+        if prefix:
+            query.setdefault("prefix", prefix)
+        response = self._client.search(**query)
+        rows = [row for record in self._records(response.body) if (row := self._row(record)) is not None]
+        return CatalogSearchResult(
+            rows=rows,
+            stale=stale,
+            sync_in_flight=in_flight,
+            sync_error=sync_error,
+        )

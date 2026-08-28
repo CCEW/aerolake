@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import contextlib
 import re
+import warnings
 from collections.abc import Iterable, Iterator
 from urllib.parse import quote, urlencode
 
 import boto3
 import structlog
+from urllib3.exceptions import InsecureRequestWarning
 from botocore.client import Config
 from botocore.exceptions import ClientError, EndpointConnectionError
 
@@ -97,6 +99,7 @@ class StorageClient:
             kwargs["verify"] = self._settings.s3_ca_bundle
         elif not self._settings.s3_verify_ssl:
             kwargs["verify"] = False
+            warnings.filterwarnings("ignore", category=InsecureRequestWarning)
         return boto3.client("s3", **kwargs)
 
     @property
