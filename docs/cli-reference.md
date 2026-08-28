@@ -189,10 +189,7 @@ uv run aerolake-ingest test.sigmf-data \
   --sample-rate 10e6 \
   --center-freq 1622e6 \
   --datatype ci16_le \
-  --iridium-annotate \
-  --iridium-parser /path/to/iridium-toolkit/iridium-parser.py \
-  --iridium-extractor /path/to/iridium-extractor \
-  --pypy /path/to/pypy3
+  --iridium-annotate
 ```
 
 ## List Captures
@@ -203,7 +200,20 @@ uv run aerolake-list --signal-type iridium
 uv run aerolake-list --prefix iridium/
 ```
 
-Listing reads MinIO object metadata and tags without downloading IQ data.
+By default, `aerolake-list --catalog auto` uses the IQEngine catalog when
+`AEROLAKE_IQENGINE_URL` is configured and falls back to the MinIO tag catalog
+when IQEngine is disabled or unavailable. Select a source explicitly with
+`--catalog iqengine` or `--catalog minio`.
+
+IQEngine searches are read-only API calls. AeroLake never accesses IQEngine's
+MongoDB. When the configured freshness interval has elapsed, a single
+background sync is triggered and the current result is returned with stale
+status; the JSON output includes `catalog`, `stale`, `sync_in_flight`, and
+`sync_error`. Set `AEROLAKE_IQENGINE_SYNC_STATE_PATH` to persist the last sync
+outcome across CLI processes. MinIO remains the degraded fallback and direct
+capture reading/replay continues to use AeroLake's existing storage paths.
+
+Listing either source avoids downloading IQ data.
 
 ## Collections
 

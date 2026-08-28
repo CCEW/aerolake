@@ -1,6 +1,6 @@
 # ADR-022 — IQEngine and AeroLake ownership boundary
 
-- **Status:** Proposed — cross-repository agreement required
+- **Status:** Accepted for AeroLake implementation; IQEngine contract agreement required
 - **Date:** 2026-08-26
 - **Author:** Camila Nino Francia
 - **Relates to:** ADR-019 (record/playback division of labour), ADR-021 (IQEngine catalog integration), ADR-023 (catalog synchronization)

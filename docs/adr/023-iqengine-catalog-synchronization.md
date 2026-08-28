@@ -1,6 +1,6 @@
 # ADR-023 — IQEngine catalog synchronization and reconciliation
 
-- **Status:** Proposed — cross-repository agreement required
+- **Status:** Accepted for AeroLake orchestration; IQEngine sync/reconciliation contract required
 - **Date:** 2026-08-26
 - **Author:** Camila Nino Francia
 - **Relates to:** ADR-003 (metadata and tags), ADR-021 (IQEngine catalog integration), ADR-022 (ownership boundary)
