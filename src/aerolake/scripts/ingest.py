@@ -182,42 +182,43 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
             "using its .sigmf-meta..."
         )
 
-    try:
-        if generated_meta_mode:
-            result: IngestResult = ingest_files(
-                file_paths=files,
-                signal_type=args.signal_type,
-                sample_rate=args.sample_rate,
-                center_freq=args.center_freq,
-                datatype=datatype,
-                hardware=hardware,
-                iqengine=args.iqengine,
-                iridium_annotate=args.iridium_annotate,
-                iridium_parser=args.iridium_parser,
-                iridium_extractor=args.iridium_extractor,
-                pypy=args.pypy,
-                storage_client=storage_client,
-            )
-        else:
-            result = ingest_sigmf_pair(
-                file_path=files[0],
-                iqengine=args.iqengine,
-                ensure_sha512=args.ensure_sha512,
-                iridium_annotate=args.iridium_annotate,
-                iridium_parser=args.iridium_parser,
-                iridium_extractor=args.iridium_extractor,
-                pypy=args.pypy,
-                storage_client=storage_client,
-            )
-    except StorageError as exc:
-        console.print(f"[bold red]x Storage error:[/] {exc}")
-        return 1
-    except (ValueError, OSError) as exc:
-        console.print(f"[bold red]x {exc}[/]")
-        return 2
-    except Exception as exc:
-        console.print(f"[bold red]x Unexpected error:[/] {exc}")
-        return 2
+    with console.status("[bold cyan]Ingesting...[/]", spinner="dots"):
+        try:
+            if generated_meta_mode:
+                result: IngestResult = ingest_files(
+                    file_paths=files,
+                    signal_type=args.signal_type,
+                    sample_rate=args.sample_rate,
+                    center_freq=args.center_freq,
+                    datatype=datatype,
+                    hardware=hardware,
+                    iqengine=args.iqengine,
+                    iridium_annotate=args.iridium_annotate,
+                    iridium_parser=args.iridium_parser,
+                    iridium_extractor=args.iridium_extractor,
+                    pypy=args.pypy,
+                    storage_client=storage_client,
+                )
+            else:
+                result = ingest_sigmf_pair(
+                    file_path=files[0],
+                    iqengine=args.iqengine,
+                    ensure_sha512=args.ensure_sha512,
+                    iridium_annotate=args.iridium_annotate,
+                    iridium_parser=args.iridium_parser,
+                    iridium_extractor=args.iridium_extractor,
+                    pypy=args.pypy,
+                    storage_client=storage_client,
+                )
+        except StorageError as exc:
+            console.print(f"[bold red]x Storage error:[/] {exc}")
+            return 1
+        except (ValueError, OSError) as exc:
+            console.print(f"[bold red]x {exc}[/]")
+            return 2
+        except Exception as exc:
+            console.print(f"[bold red]x Unexpected error:[/] {exc}")
+            return 2
 
     console.print("[bold green]Capture ingested[/]")
     table = Table(show_header=False, box=None, padding=(0, 2))

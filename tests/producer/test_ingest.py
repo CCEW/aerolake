@@ -309,6 +309,21 @@ def test_ingest_iridium_annotation_is_preserved_after_hash_rewrite(
     assert uploaded["global"]["core:sha512"] == hashlib.sha512(samples.tobytes()).hexdigest()
 
 
+def test_iridium_annotation_drops_empty_parser_entries() -> None:
+    metadata = {
+        "annotations": [
+            {"core:sample_start": 12, "core:label": "Iridium frame"},
+            {},
+        ]
+    }
+
+    ingest_module._remove_empty_annotation_objects(metadata)
+
+    assert metadata["annotations"] == [
+        {"core:sample_start": 12, "core:label": "Iridium frame"}
+    ]
+
+
 def test_iqengine_artifact_command_preserves_existing_jpeg_as_preview(tmp_path) -> None:
     base = tmp_path / "capture"
     samples = np.exp(1j * np.linspace(0, 8 * np.pi, 4096)).astype(np.complex64)

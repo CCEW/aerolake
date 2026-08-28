@@ -422,6 +422,15 @@ def _safe_key_component(value: object, default: str) -> str:
     return text or default
 
 
+def _remove_empty_annotation_objects(metadata: dict[str, Any]) -> None:
+    """Remove empty annotation objects emitted by some parser inputs."""
+    annotations = metadata.get("annotations")
+    if isinstance(annotations, list):
+        metadata["annotations"] = [
+            annotation for annotation in annotations if annotation != {}
+        ]
+
+
 def _apply_iridium_annotations(
     *,
     file_path: str,
@@ -470,7 +479,13 @@ def _apply_iridium_annotations(
             raise ValueError(f"iridium-parser annotation failed: {error or 'no error output'}")
 
         annotated = meta_path.read_bytes()
-        SigMFFile(metadata=json.loads(annotated.decode("utf-8"))).validate()
+        annotated_metadata = json.loads(annotated.decode("utf-8"))
+        if isinstance(annotated_metadata, dict):
+            _remove_empty_annotation_objects(annotated_metadata)
+            annotated = json.dumps(annotated_metadata, indent=2, sort_keys=True).encode(
+                "utf-8"
+            )
+        SigMFFile(metadata=annotated_metadata).validate()
         return annotated
 
 
