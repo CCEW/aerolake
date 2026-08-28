@@ -88,9 +88,11 @@ AeroLake computes it and adds it to the uploaded meta automatically:
 uv run aerolake-ingest capture.sigmf-data
 ```
 
-If required canonical fields are missing, ingest adds safe defaults and
-`<missing:...>` placeholders to the local `.sigmf-meta`, reports the unresolved
-fields, and stops before upload. After the file is completed, existing `ci16_le` data is
+If required canonical fields are missing, or the `annotations` array is empty,
+ingest adds safe defaults and `<missing:...>` placeholders to the local
+`.sigmf-meta`, reports the unresolved fields, and stops before upload. For an
+empty annotations array, rerun with `--iridium-annotate` to generate annotations.
+After the file is completed, existing `ci16_le` data is
 converted to normalized `cf32_le` before upload, and the metadata/hash describe
 the converted bytes. Legacy `cf32` metadata is canonicalized to `cf32_le`.
 The `--ensure-sha512` option remains accepted for compatibility but is no

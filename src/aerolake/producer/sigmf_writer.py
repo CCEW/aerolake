@@ -266,7 +266,12 @@ def missing_canonical_fields(metadata: dict[str, object]) -> list[str]:
             for field in ("core:sample_start", "core:frequency", "core:datetime")
             if field not in first_capture or _is_missing_placeholder(first_capture[field])
         )
-    if "annotations" not in metadata or _is_missing_placeholder(metadata["annotations"]):
+    annotations = metadata.get("annotations")
+    if (
+        "annotations" not in metadata
+        or _is_missing_placeholder(annotations)
+        or (isinstance(annotations, list) and not annotations)
+    ):
         missing.append("annotations")
     return missing
 

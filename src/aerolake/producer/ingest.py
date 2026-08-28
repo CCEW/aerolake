@@ -479,6 +479,10 @@ def ingest_sigmf_pair(
     file_path: str,
     iqengine: bool | str = False,
     ensure_sha512: bool = False,
+    iridium_annotate: bool = False,
+    iridium_parser: str = "~/iridium-toolkit/iridium-parser.py",
+    iridium_extractor: str = "iridium-extractor",
+    pypy: str = "pypy3",
     storage_client: StorageClient | None = None,
 ) -> IngestResult:
     """Upload an existing SigMF data/meta pair.
@@ -493,6 +497,15 @@ def ingest_sigmf_pair(
 
     meta_bytes = meta_path.read_bytes()
     metadata = json.loads(meta_bytes.decode("utf-8"))
+    if iridium_annotate:
+        meta_bytes = _apply_iridium_annotations(
+            file_path=file_path,
+            meta_bytes=meta_bytes,
+            parser_path=iridium_parser,
+            extractor_cmd=iridium_extractor,
+            pypy_cmd=pypy,
+        )
+        metadata = json.loads(meta_bytes.decode("utf-8"))
     global_meta = metadata.get("global", {})
     captures = metadata.get("captures", [])
     first_capture = captures[0] if isinstance(captures, list) and captures else {}
@@ -520,10 +533,17 @@ def ingest_sigmf_pair(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        annotation_hint = (
+            " For an empty annotations array, add annotations with "
+            "--iridium-annotate and run ingest again."
+            if "annotations" in missing
+            else ""
+        )
         raise ValueError(
             "Existing SigMF metadata was incomplete. Added defaults and placeholders to "
             f"{meta_path}. Fill these fields and run ingest again: "
             + ", ".join(missing)
+            + annotation_hint
         )
     SigMFFile(metadata=metadata).validate()
     sample_rate = float(global_meta.get("core:sample_rate") or 0)

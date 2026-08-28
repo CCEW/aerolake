@@ -60,7 +60,11 @@ def _canonical_meta(
                 "core:datetime": "2023-07-20T11:39:48.680Z",
             }
         ],
-        "annotations": [] if annotations is None else annotations,
+        "annotations": (
+            [{"core:sample_start": 0, "core:label": "capture"}]
+            if annotations is None
+            else annotations
+        ),
     }
 
 
@@ -376,7 +380,7 @@ def test_ingest_sigmf_pair_normalizes_ci16_le_and_updates_metadata(
         json.dumps(
             _canonical_meta(
                 datatype="ci16_le",
-                annotations=[],
+                annotations=[{"core:sample_start": 0, "core:label": "capture"}],
             )
         )
     )
@@ -415,6 +419,18 @@ def test_ingest_sigmf_pair_can_add_missing_sha512(
         samples.tobytes()
     ).hexdigest()
     assert meta_path.read_bytes() == original_meta_bytes
+
+
+def test_ingest_sigmf_pair_rejects_empty_annotations_with_annotation_hint(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(np.ones(128, dtype=np.complex64).tobytes())
+    meta_path.write_text(json.dumps(_canonical_meta(annotations=[])))
+
+    with pytest.raises(ValueError, match=r"annotations.*--iridium-annotate"):
+        ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
 
 
 def test_ingest_sigmf_pair_requires_signal_type(
@@ -696,7 +712,9 @@ def test_ingest_cli_can_ensure_sha512_for_existing_sigmf_pair(
     path.write_bytes(samples.tobytes())
     meta_path.write_text(
         json.dumps(
-            _canonical_meta(annotations=[])
+            _canonical_meta(
+                annotations=[{"core:sample_start": 0, "core:label": "capture"}]
+            )
         )
     )
 

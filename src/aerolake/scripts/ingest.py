@@ -104,8 +104,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--iridium-annotate",
         action="store_true",
-        help="After generating SigMF metadata, run iridium-extractor piped into "
-        "iridium-toolkit's parser to append annotations before upload.",
+        help="Run iridium-extractor piped into iridium-toolkit's parser to append "
+        "annotations before upload (generated or existing-pair mode).",
     )
     parser.add_argument(
         "--iridium-parser",
@@ -143,7 +143,6 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
         args.center_freq is not None,
         args.datatype is not None,
         args.hardware is not None,
-        args.iridium_annotate,
     )
     generated_meta_mode = any(metadata_flags)
     if generated_meta_mode and args.ensure_sha512:
@@ -204,6 +203,10 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
                 file_path=files[0],
                 iqengine=args.iqengine,
                 ensure_sha512=args.ensure_sha512,
+                iridium_annotate=args.iridium_annotate,
+                iridium_parser=args.iridium_parser,
+                iridium_extractor=args.iridium_extractor,
+                pypy=args.pypy,
                 storage_client=storage_client,
             )
     except StorageError as exc:
