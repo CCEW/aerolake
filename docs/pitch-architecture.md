@@ -112,7 +112,7 @@ This is the point **not to oversell** in a presentation. Today AeroLake is a
 - ✅ **Targeted extraction**: partial reads through *HTTP Range* (read back
   t=200s without loading the whole file) then publication on a **ZeroMQ Pub/Sub**
   bus.
-- 🔜 **Metadata query integration**: IQEngine provides the MongoDB-backed
+- ✅ **Metadata query integration**: IQEngine provides the MongoDB-backed
   catalog and query API, while MinIO remains the store for the SigMF files.
   Reusing that catalog avoids duplicating database infrastructure in AeroLake
   (see ADR-021 and ADR-022). A future SQL/analytical layer such as Parquet or

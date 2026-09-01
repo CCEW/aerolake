@@ -1,5 +1,9 @@
 # AeroLake CLI Reference
 
+> Start here for exact commands and ingest behavior.
+> Read the central index first: [README.md](./README.md)
+> Recommended order: [operator-cli-guide.md](./operator-cli-guide.md) → [cli-reference.md](./cli-reference.md) → [IQENGINE-User-Manual.md](./IQENGINE-User-Manual.md) → [user-manual.md](./user-manual.md)
+
 This is the full CLI reference for AeroLake. If you are a system user and want the short overview first, read **`docs/operator-cli-guide.md`**. It explains the common CLI workflows in plain language and points to this page only when you need the detailed command variations and edge cases.
 
 This page lists the everyday commands and the important variations. Run commands

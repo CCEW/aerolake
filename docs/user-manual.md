@@ -1,5 +1,9 @@
 # AeroLake — User Manual
 
+> Start here for day-to-day operations.
+> Read the central index first: [README.md](./README.md)
+> Recommended order: [operator-cli-guide.md](./operator-cli-guide.md) → [cli-reference.md](./cli-reference.md) → [IQENGINE-User-Manual.md](./IQENGINE-User-Manual.md) → [user-manual.md](./user-manual.md)
+
 > **Who is this for?** Anyone at LASSENA who wants to **record, find or replay**
 > RF signals — without being a developer. No command line is needed for daily
 > use.

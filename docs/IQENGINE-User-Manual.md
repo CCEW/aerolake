@@ -1,5 +1,9 @@
 # IQEngine User Manual
 
+> Start here for IQEngine usage and capture discovery.
+> Read the central index first: [README.md](./README.md)
+> Recommended order: [operator-cli-guide.md](./operator-cli-guide.md) → [cli-reference.md](./cli-reference.md) → [IQENGINE-User-Manual.md](./IQENGINE-User-Manual.md) → [user-manual.md](./user-manual.md)
+
 This is the quick-start guide for anyone using IQEngine to find, inspect, and analyze RF recordings.
 
 ## 1. IQEngine in 30 seconds

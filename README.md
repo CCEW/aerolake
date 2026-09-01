@@ -45,7 +45,7 @@ See ADR-013 for the details of that refocus.
     uv run aerolake-healthcheck
     uv run aerolake-capture --config examples/capture.example.toml   # TOML (recommended) or JSON
     uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6
-    uv run aerolake-ingest capture.sigmf-data --iqengine              # existing capture.sigmf-meta beside it
+    uv run aerolake-ingest capture.sigmf-data                         # existing capture.sigmf-meta beside it
     uv run aerolake-list --signal-type gnss_l1
     uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campaign" --description "..."
     uv run aerolake-play --prefix gnss_l1/
@@ -54,7 +54,8 @@ See ADR-013 for the details of that refocus.
 
 See `docs/cli-reference.md` for command details, especially the
 `aerolake-ingest` variants: generated metadata, existing SigMF pairs,
-IQEngine sidecars, and Iridium annotation.
+and Iridium annotation. For metadata structure and required field shapes,
+use `examples/iqengine-metadata-schema-example.json` as the field-level reference.
 
 In both ingest modes, AeroLake completes a pre-upload checklist. Raw source
 formats are validated and converted to normalized `cf32_le`. Existing SigMF
@@ -135,6 +136,8 @@ The docs/adr/ folder holds the Architectural Decision Records — the written tr
 
 Start here:
 
+- **docs/operator-cli-guide.md** — CLI overview for people using AeroLake as a system; the short route for operators who are not reading the code.
+- **docs/cli-reference.md** — the full command reference and advanced CLI behavior.
 - **docs/handoff-document.md** — the complete handoff: concepts from zero, install, the whole code, the decisions and the roadmap. Start here if you are taking the project over.
 - **docs/code-map.md** — the whole codebase in one page.
 - **docs/user-manual.md** — daily use, no terminal needed.

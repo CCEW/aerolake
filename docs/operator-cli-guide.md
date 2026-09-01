@@ -1,5 +1,9 @@
 # AeroLake CLI Guide for System Users
 
+> Start here for the operator workflow.
+> Read the central index first: [README.md](./README.md)
+> Recommended order: [operator-cli-guide.md](./operator-cli-guide.md) → [cli-reference.md](./cli-reference.md) → [IQENGINE-User-Manual.md](./IQENGINE-User-Manual.md) → [user-manual.md](./user-manual.md)
+
 This is the short, operator-focused guide for people who use AeroLake as a system, not as a developer working on the Python code.
 
 If you only need the essentials, read this page first. If you need the exact command variants, edge cases, or advanced behavior, continue to the deeper reference in [cli-reference.md](./cli-reference.md).
