@@ -1,0 +1,51 @@
+{
+  "global": {
+    "core:author": "<string or null>",
+    "core:collection": "<collection basename or null>",
+    "core:geolocation": "<GeoJSON geometry or null>",
+    "core:data_doi": "<URI string or null>",
+    "core:dataset": "<dataset filename or null>",
+    "core:datatype": "<required: c|r + f32|f64|i32|i16|u32|u16|i8|u8 + optional _le|_be>",
+    "core:sample_rate": "<number in samples/second; IQEngine defaults to 1>",
+    "core:description": "<string or null>",
+    "core:recorder": "<software name (GR-ION|GNU Radio|aerolake-ingest) or null>",
+    "core:hw": "<hardware description (bladerf|rtl-sdr|null)>",
+    "core:version": "<required SigMF version string>",
+    "core:num_channels": "<positive integer; default 1>",
+    "core:offset": "<non-negative integer; default 0>",
+    "core:extensions": "<array of {name, version, optional} objects or []>",
+    "core:sha512": "<128-character hexadecimal hash or null>",
+    "aerolake:modified": "<ISO-8601 source metadata modified timestamp>",
+    "aerolake:duration_s": "<number of seconds or null>",
+    "aerolake:mobile": "<boolean or null>",
+    "aerolake:operator": "<recording operator or null>",
+    "aerolake:location": "<string or null>",
+    "aerolake:sample_count": "<number of IQ samples or null>",
+    "aerolake:signal_type": "<string (iridium|starlink|ais|ads-b)>",
+    "antenna:gain": "<number or null>",
+    "antenna:type": "<string or null>",
+    "antenna:model": "<string or null>",
+    "core:license": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "core:meta_doi": "<URI string or null>",
+    "core:metadata_only": "<boolean>",
+    "core:trailing_bytes": "<non-negative integer or null>",
+    "traceability:origin": {
+      "type": "<source type, normally api>",
+      "account": "<source account or S3 region>",
+      "container": "<bucket or container name>",
+      "file_path": "<object path without .sigmf-meta or .sigmf-data>"
+    },
+    "traceability:revision": "<integer assigned by the integration or sync process>",
+    "traceability:sample_length": "<number of IQ samples calculated from the data object>"
+  },
+  "captures": [
+    {
+      "core:global_index": "<integer or null>",
+      "core:header_bytes": "<non-negative integer or null>",
+      "core:datetime": "<ISO-8601 timestamp or null>",
+      "core:frequency": "<number in Hz or null>",
+      "core:sample_start": "<required non-negative integer>"
+    }
+  ],
+  "annotations": []
+}
