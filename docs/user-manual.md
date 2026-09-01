@@ -13,16 +13,21 @@ open **SigMF** standard, stored in the shared **MinIO** storage (FAST server),
 described by **searchable metadata and tags**, with an automatically generated
 **spectrum preview**.
 
-One stored capture = 3 objects side by side:
+One stored capture is normally a SigMF pair plus the visualization assets that
+IQEngine or the capture UI can generate after the recording is opened and
+refreshed:
 
 ```
 {signal_type}/{date}/{session}/capture.sigmf-data    ← the signal (raw IQ samples)
                                capture.sigmf-meta    ← its description (SigMF JSON)
-                               capture-preview.png   ← the spectrum + waterfall preview
+                               capture.jpg          ← the standard capture image preview
+                               capture.minimap      ← the compact overview map/thumbnail
 ```
 
 The **signal itself** is preserved, sample by sample (sha512 integrity): what
-you replay is **exactly** what was received.
+you replay is **exactly** what was received. The GUI-created
+`capture-preview.png` is not the core lakehouse artifact and is effectively a
+separate preview image used in the browser UI.
 
 ## 2. The addresses to know
 
@@ -76,8 +81,9 @@ the hardware, captures, then shows: sample count, size, duration, and the
 
 **With nothing installed**: open the **MinIO console**
 (https://minio.fast.etsmtl.ca/browser) → the captures bucket → browse by signal
-type then by date → click the **`capture-preview.png`** to see the spectrum
-immediately.
+type then by date → open the capture and let IQEngine refresh the associated
+preview assets. The standard capture images are usually `capture.jpg` and
+`capture.minimap` rather than the older GUI-only preview image.
 
 **In the AeroLake interface**: **▶ Playback** tab → pick a capture from the list
 → metadata + preview are shown → with the *Start / Window* sliders, view the
@@ -100,7 +106,9 @@ Three modes, from simplest to most complete:
    `gnuradio/playback.grc` flowgraph. *(RF branch of the project — see ADR-019;
    owner: Camila.)*
 
-## 6. For power users: the command line
+## 6. For power users: the command line (see cli-reference.md for step-by-step examples)
+
+For system users who mainly work from the terminal, start with the operator-focused overview in **`docs/operator-cli-guide.md`**. It explains the workflow at a high level and points to the deeper reference in **`docs/cli-reference.md`** when needed.
 
 Every feature also exists as a CLI (from the repository):
 
@@ -114,6 +122,8 @@ uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # replay a wi
 uv run aerolake-collection --prefix gnss_l1/2026-07-01/ --name "campaign"  # group into a collection
 ./acquire.sh my_capture.toml                      # all-in-one: USB + SoapySDR + healthcheck + capture
 ```
+
+The metadata reference for any capture is the SigMF JSON structure in **`examples/capture.sigmf-meta.example.json`**. For a real, populated example see **`examples/short_24lines.ingest.sigmf-meta.example.json`**.
 
 ## 7. Set up a new acquisition station
 

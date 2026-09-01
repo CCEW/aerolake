@@ -1,10 +1,31 @@
 # AeroLake CLI Reference
 
+This is the full CLI reference for AeroLake. If you are a system user and want the short overview first, read **`docs/operator-cli-guide.md`**. It explains the common CLI workflows in plain language and points to this page only when you need the detailed command variations and edge cases.
+
 This page lists the everyday commands and the important variations. Run commands
 from the repository root after `uv sync` and after starting MinIO with
 `docker compose up -d` from `docker/`.
 
-## Health Check
+## 1. Quick overview
+
+The most important pattern in AeroLake is the SigMF pair:
+
+- `capture.sigmf-data` = raw IQ sample data
+- `capture.sigmf-meta` = metadata JSON describing the capture
+
+The canonical metadata template is `examples/capture.sigmf-meta.example.json`, the practical example is `examples/short_24lines.ingest.sigmf-meta.example.json`, and the full field catalogue is `examples/iqengine-metadata-schema-example.json`. The last one is especially useful when generating a new `.sigmf-meta` file from raw data, because it shows the fields that commonly appear in a fully populated SigMF document after ingest and IQEngine sync.
+
+Use the CLI in these common modes:
+
+- `aerolake-healthcheck` for environment readiness
+- `aerolake-capture` to record a new capture from config
+- `aerolake-list` to browse catalog entries and filters
+- `aerolake-ingest` to add raw files or validate an existing SigMF pair
+- `aerolake-play` / `aerolake-stream` / `aerolake-subscribe` for replay and playback
+
+---
+
+## 2. Health Check
 
 ```bash
 uv run aerolake-healthcheck
@@ -12,7 +33,7 @@ uv run aerolake-healthcheck
 
 Checks that the configured S3/MinIO bucket is reachable.
 
-## Capture From Config
+## 3. Capture From Config
 
 ```bash
 uv run aerolake-capture --config examples/capture.example.toml
@@ -21,11 +42,82 @@ uv run aerolake-capture --config examples/capture.example.toml
 Use this when AeroLake is doing the capture itself from a TOML or JSON config.
 Templates are in `examples/`.
 
-## Ingest An IQ File
+## 4. Ingest An IQ File
 
 `aerolake-ingest` has two modes.
 
-### 1. Generate The SigMF Meta From CLI Flags
+### 4.1 Step-by-step ingest examples
+
+These examples show the operational flow from the CLI point of view.
+
+#### A. Ingest when the `.sigmf-meta` file already exists
+
+```bash
+ls -l capture.sigmf-data capture.sigmf-meta
+uv run aerolake-ingest capture.sigmf-data
+```
+
+Expected flow:
+
+1. AeroLake locates `capture.sigmf-data` and `capture.sigmf-meta` next to each other.
+2. It validates that the JSON is readable SigMF metadata.
+3. It checks that the `.sigmf-data` bytes are aligned to the declared datatype.
+4. It verifies `global.core:sha512` if one already exists.
+5. If the hash is missing, it computes one and prepares to upload the final meta.
+6. If the declared datatype is `ci16_le`, it normalizes to stored `cf32_le` before upload.
+7. It validates the final metadata and uploads metadata first, then the IQ data.
+
+Typical output looks like:
+
+```text
+[ingest] found SigMF pair: capture.sigmf-data, capture.sigmf-meta
+[ingest] validating metadata schema
+[ingest] datatype ok: ci16_le -> normalized cf32_le
+[ingest] hash missing; computing core:sha512
+[ingest] metadata valid
+[ingest] upload metadata object
+[ingest] upload data object
+[ingest] ingest complete
+```
+
+#### B. Ingest when the `.sigmf-meta` file is missing
+
+```bash
+ls -l capture.sigmf-data
+uv run aerolake-ingest capture.sigmf-data \
+  --signal-type iridium \
+  --sample-rate 10e6 \
+  --center-freq 1622e6 \
+  --datatype ci16_le \
+  --hardware bladerf
+```
+
+Expected flow:
+
+1. AeroLake notices there is no local `.sigmf-meta` sidecar.
+2. It treats the file as raw IQ input and builds a new SigMF metadata document from the CLI flags.
+3. It checks the source datatype and normalizes the stored bytes to `cf32_le`.
+4. It computes `core:sha512` over the stored bytes.
+5. It validates the generated metadata, including required fields and format values.
+6. It uploads the metadata object first and the data object second.
+
+Typical output looks like:
+
+```text
+[ingest] source file detected: capture.sigmf-data
+[ingest] no local sigmf-meta found; creating metadata from CLI arguments
+[ingest] signal_type=iridium sample_rate=10e6 center_freq=1622000000
+[ingest] source datatype: ci16_le -> normalize to cf32_le
+[ingest] computing sha512 for stored bytes
+[ingest] validating generated SigMF metadata
+[ingest] upload metadata object
+[ingest] upload data object
+[ingest] ingest complete
+```
+
+> Important: in this mode, placeholders such as `REPLACE_WITH_*`, `TODO`, or `<missing:...>` should not be left in the uploaded metadata. The values must be filled with real SigMF-compatible data. Use `examples/capture.sigmf-meta.example.json` and `examples/iqengine-metadata-schema-example.json` as the reference for the expected field layout and value shapes.
+
+### 4.2 Generate The SigMF Meta From CLI Flags
 
 Use this when you have an IQ data file but no `.sigmf-meta`, or when you want
 AeroLake to create a fresh metadata file.
@@ -63,8 +155,8 @@ The generated-data checklist is: confirm the source datatype is supported,
 confirm every file is aligned to a complete IQ sample, convert the source to
 normalized `cf32_le`, compute the hash over the converted bytes, validate the
 generated SigMF metadata, then upload metadata followed by data.
-
-### 2. Ingest An Existing SigMF Pair
+> **Important**: when you are creating a `.sigmf-meta` file from raw IQ data, do not leave placeholder values such as `REPLACE_WITH_*`, `TODO`, or `<missing:...>` in a document that will be uploaded. Fill every field that can be known with the correct SigMF value shape and AeroLake conventions. The IQEngine schema example in `examples/iqengine-metadata-schema-example.json` is the best reference for the kinds of fields that legitimately appear after a capture is ingested and later refreshed in IQEngine.
+### 4.3. Ingest An Existing SigMF Pair
 
 Use this when you already have both files:
 
@@ -126,31 +218,15 @@ is not modified, so add the field locally and run ingest again.
 Do not pass `--signal-type` in this mode. Supplying metadata flags selects the
 generated-meta mode.
 
-### IQEngine Sidecars
+### 4.4 Metadata placeholders and IQEngine reference schema
 
-Add `--iqengine` to either ingest mode:
+When a local `.sigmf-meta` file is missing, AeroLake is creating a new metadata record from scratch. This is the moment to fill the placeholders with the correct values for the recording, not to leave a half-empty document behind.
 
-```bash
-uv run aerolake-ingest capture.sigmf-data --iqengine
-```
+The schema example in `examples/iqengine-metadata-schema-example.json` shows the fields that commonly appear in a valid capture after AeroLake ingest and later IQEngine sync. It is a useful field catalogue for `global`, `captures`, and annotation conventions, and it helps distinguish values that are required, optional, or set by the catalog UI after refresh.
 
-With an existing SigMF pair, sidecars are generated from the source datatype
-before any normalization and the uploaded metadata reflects the stored
-`cf32_le` representation. It generates or reuses:
+Preview/thumbnail sidecars are not produced by AeroLake ingest. They are created by IQEngine after clicking refresh and opening the capture in the IQEngine UI. AeroLake remains responsible for the SigMF pair and metadata validation.
 
-```text
-capture.jpg
-capture.preview.jpg
-capture.minimap
-```
-
-To regenerate existing local sidecars:
-
-```bash
-uv run aerolake-ingest capture.sigmf-data --iqengine redo
-```
-
-### Iridium Annotation During Generated-Meta Ingest
+### 4.5 Iridium Annotation During Generated-Meta Ingest
 
 Use this when AeroLake is creating the meta and you want to apply annotations
 from `iridium-toolkit` before uploading to MinIO.
@@ -192,7 +268,7 @@ uv run aerolake-ingest test.sigmf-data \
   --iridium-annotate
 ```
 
-## List Captures
+## 5. List Captures
 
 ```bash
 uv run aerolake-list
@@ -215,7 +291,7 @@ capture reading/replay continues to use AeroLake's existing storage paths.
 
 Listing either source avoids downloading IQ data.
 
-## Collections
+## 6.Collections
 
 ```bash
 uv run aerolake-collection \
@@ -227,7 +303,7 @@ uv run aerolake-collection \
 Creates a SigMF collection from complete `.sigmf-data` + `.sigmf-meta` pairs
 under a prefix.
 
-## Playback And Streaming
+## 7. Playback And Streaming
 
 Preview/play a stored capture:
 
