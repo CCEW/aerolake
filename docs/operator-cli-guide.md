@@ -73,6 +73,34 @@ uv run aerolake-list --prefix iridium/
 
 This lets you browse or filter the lakehouse without downloading the full IQ data.
 
+To use the same filter concepts as IQEngine's Query Recordings panel, query the
+IQEngine catalog explicitly. The CLI test must include `--catalog iqengine` and
+at least one filter:
+
+```bash
+uv run aerolake-list --catalog iqengine \
+   --frequency "1621e6-1623e6" \
+   --signal-type iridium \
+   --hardware bladerf \
+   --date "2026-09-01/2026-09-02" \
+   --geolocation "45.5017,-73.5673" \
+   --description "flight test" \
+   --text "newflight" \
+   --operator "Camila Nino Francia" \
+   --location "Montreal" \
+   --recorder "aerolake-ingest" \
+   --json
+```
+
+The exact range, date, and geolocation value formats are interpreted by the
+configured IQEngine API. These metadata filters require `--catalog iqengine`;
+direct MinIO queries support signal type, hardware, and generic tags.
+
+Do not use `--catalog auto` when you need to verify IQEngine specifically.
+`auto` falls back to MinIO when IQEngine is not configured or unavailable. With
+no filter, that fallback lists every complete MinIO capture, so the output can
+show `"catalog": "minio"` even though IQEngine is part of the deployment.
+
 ### D. Ingest an existing IQ file
 
 ```bash
@@ -86,7 +114,7 @@ uv run aerolake-ingest capture.sigmf-data \
 
 This is used when a raw file exists and you want AeroLake to create a matching SigMF metadata file and upload the result.
 
-> Important: when no `.sigmf-meta` file exists, you are creating the capture identity card from scratch. Fill the placeholder metadata fields with real values that match the SigMF format and the AeroLake conventions. Do not leave `REPLACE_WITH_*`, `TODO`, or other placeholders in a file that is being uploaded. The IQEngine schema example in [../examples/iqengine-metadata-schema-example.json](../examples/iqengine-metadata-schema-example.json) is the best reference for which fields may exist and which value shapes they expect.
+> **Important**: when no `.sigmf-meta` file exists, you are creating the capture identity card from scratch. Fill the placeholder metadata fields with real values that match the SigMF format and the AeroLake conventions. Do not leave `REPLACE_WITH_*`, `TODO`, or other placeholders in a file that is being uploaded. The IQEngine schema example in [../examples/iqengine-metadata-schema-example.json](../examples/iqengine-metadata-schema-example.json) is the best reference for which fields may exist and which value shapes they expect.
 
 ### E. Ingest an existing SigMF pair
 
@@ -94,7 +122,21 @@ This is used when a raw file exists and you want AeroLake to create a matching S
 uv run aerolake-ingest capture.sigmf-data
 ```
 
-Use this when both `capture.sigmf-data` and `capture.sigmf-meta` already exist. AeroLake validates the metadata, checks the sample alignment, and prepares the upload.
+Use this when both `capture.sigmf-data` and `capture.sigmf-meta` already exist. AeroLake validates the metadata, checks the sample alignment, and prepares the upload. If the meta file is missing, rerun with the metadata flags shown in section D; AeroLake will create an editable `.sigmf-meta` template with `<missing:...>` values and stop before upload. Complete that file, then rerun this command.
+
+The metadata must also contain at least one annotation before an existing pair
+can be uploaded. An empty `annotations: []` array is reported as incomplete.
+For an Iridium capture, let the annotation tools populate it:
+
+```bash
+uv run aerolake-ingest capture.sigmf-data --iridium-annotate
+```
+
+This command uses the existing `capture.sigmf-meta`, adds the detected Iridium
+annotations, validates the completed pair, and then uploads it. If the capture
+is not Iridium, add an appropriate SigMF annotation object manually before
+rerunning the ingest command. Do not use `--signal-type`, `--sample-rate`, or
+`--center-freq` in existing-pair mode.
 
 ### F. Replay or stream a capture
 

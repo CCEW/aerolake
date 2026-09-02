@@ -48,7 +48,7 @@ Templates are in `examples/`.
 
 ## 4. Ingest An IQ File
 
-`aerolake-ingest` has two modes.
+`aerolake-ingest` has two modes for handling missing metadata.
 
 ### 4.1 Step-by-step ingest examples
 
@@ -64,7 +64,7 @@ uv run aerolake-ingest capture.sigmf-data
 Expected flow:
 
 1. AeroLake locates `capture.sigmf-data` and `capture.sigmf-meta` next to each other.
-2. It validates that the JSON is readable SigMF metadata.
+2. It validates that the JSON is readable SigMF metadata and uploads it.
 3. It checks that the `.sigmf-data` bytes are aligned to the declared datatype.
 4. It verifies `global.core:sha512` if one already exists.
 5. If the hash is missing, it computes one and prepares to upload the final meta.
@@ -74,7 +74,7 @@ Expected flow:
 Typical output looks like:
 
 ```text
-[ingest] found SigMF pair: capture.sigmf-data, capture.sigmf-meta
+[ingest] found SigMF pair: capture.sigmf-data, capture.sigmf-meta, uploading...
 [ingest] validating metadata schema
 [ingest] datatype ok: ci16_le -> normalized cf32_le
 [ingest] hash missing; computing core:sha512
@@ -99,32 +99,37 @@ uv run aerolake-ingest capture.sigmf-data \
 Expected flow:
 
 1. AeroLake notices there is no local `.sigmf-meta` sidecar.
-2. It treats the file as raw IQ input and builds a new SigMF metadata document from the CLI flags.
-3. It checks the source datatype and normalizes the stored bytes to `cf32_le`.
-4. It computes `core:sha512` over the stored bytes.
-5. It validates the generated metadata, including required fields and format values.
-6. It uploads the metadata object first and the data object second.
+2. It creates a same-basename `.sigmf-meta` file containing the CLI values, derived defaults, and `<missing:...>` placeholders only for values the CLI cannot know.
+3. It stops before upload so you can enter the missing operator, location, and other capture-specific values.
+4. You complete and save the metadata using the SigMF examples and schema reference.
+5. You rerun `uv run aerolake-ingest capture.sigmf-data` without metadata flags.
+6. AeroLake validates the completed pair, normalizes the stored bytes to `cf32_le`, computes `core:sha512`, and uploads metadata first, then data.
 
 Typical output looks like:
 
 ```text
 [ingest] source file detected: capture.sigmf-data
-[ingest] no local sigmf-meta found; creating metadata from CLI arguments
-[ingest] signal_type=iridium sample_rate=10e6 center_freq=1622000000
-[ingest] source datatype: ci16_le -> normalize to cf32_le
-[ingest] computing sha512 for stored bytes
-[ingest] validating generated SigMF metadata
-[ingest] upload metadata object
-[ingest] upload data object
-[ingest] ingest complete
+[ingest] no local sigmf-meta found; creating editable metadata template
+[ingest] created capture.sigmf-meta
+[ingest] fill <missing:...> values and rerun without metadata flags
+[ingest] nothing uploaded
 ```
 
 > Important: in this mode, placeholders such as `REPLACE_WITH_*`, `TODO`, or `<missing:...>` should not be left in the uploaded metadata. The values must be filled with real SigMF-compatible data. Use `examples/capture.sigmf-meta.example.json` and `examples/iqengine-metadata-schema-example.json` as the reference for the expected field layout and value shapes.
 
+After completing the template:
+
+```bash
+uv run aerolake-ingest capture.sigmf-data
+```
+
 ### 4.2 Generate The SigMF Meta From CLI Flags
 
-Use this when you have an IQ data file but no `.sigmf-meta`, or when you want
-AeroLake to create a fresh metadata file.
+Use this when you have an IQ data file and want to supply capture values from
+the command line. For a single file without a same-basename `.sigmf-meta`, the
+first run creates an editable placeholder metadata file and stops before upload.
+After completing it, rerun without metadata flags to validate and upload the
+SigMF pair.
 
 ```bash
 uv run aerolake-ingest capture.sigmf-data \
@@ -151,16 +156,18 @@ Supported source datatypes for generated-meta ingest:
 cf32, cu8, cs16, ci16_le, cs32
 ```
 
-In this mode, `--signal-type`, `--sample-rate`, and `--center-freq` are
-required. AeroLake creates a new `.sigmf-meta`, uploads it to MinIO, streams the
-data, computes `core:sha512`, then uploads the final meta.
-
 The generated-data checklist is: confirm the source datatype is supported,
-confirm every file is aligned to a complete IQ sample, convert the source to
-normalized `cf32_le`, compute the hash over the converted bytes, validate the
-generated SigMF metadata, then upload metadata followed by data.
-> **Important**: when you are creating a `.sigmf-meta` file from raw IQ data, do not leave placeholder values such as `REPLACE_WITH_*`, `TODO`, or `<missing:...>` in a document that will be uploaded. Fill every field that can be known with the correct SigMF value shape and AeroLake conventions. The IQEngine schema example in `examples/iqengine-metadata-schema-example.json` is the best reference for the kinds of fields that legitimately appear after a capture is ingested and later refreshed in IQEngine.
-### 4.3. Ingest An Existing SigMF Pair
+confirm every file is aligned to a complete IQ sample, complete all metadata
+placeholders with real SigMF-compatible values, normalize the source to stored
+`cf32_le`, compute the hash over the stored bytes, validate the metadata, then
+upload metadata followed by data.
+
+> **Important**: do not leave `REPLACE_WITH_*`, `TODO`, or `<missing:...>` values
+> in metadata that will be uploaded. Use `examples/capture.sigmf-meta.example.json`
+> and `examples/iqengine-metadata-schema-example.json` as references for the
+> expected field layout and value shapes.
+
+### 4.3 Ingest An Existing SigMF Pair
 
 Use this when you already have both files:
 
@@ -186,8 +193,18 @@ uv run aerolake-ingest capture.sigmf-data
 
 If required canonical fields are missing, or the `annotations` array is empty,
 ingest adds safe defaults and `<missing:...>` placeholders to the local
-`.sigmf-meta`, reports the unresolved fields, and stops before upload. For an
-empty annotations array, rerun with `--iridium-annotate` to generate annotations.
+`.sigmf-meta`, reports the unresolved fields, and stops before upload. An empty
+`annotations: []` array is therefore a required correction step, not an
+optional warning. For an Iridium capture, rerun with `--iridium-annotate` to
+generate the annotations:
+
+```bash
+uv run aerolake-ingest capture.sigmf-data --iridium-annotate
+```
+
+For another signal type, add an appropriate SigMF annotation object manually,
+then rerun `uv run aerolake-ingest capture.sigmf-data`. Do not add metadata
+flags when rerunning an existing pair.
 After the file is completed, existing `ci16_le` data is
 converted to normalized `cf32_le` before upload, and the metadata/hash describe
 the converted bytes. Legacy `cf32` metadata is canonicalized to `cf32_le`.
@@ -271,19 +288,80 @@ uv run aerolake-ingest test.sigmf-data \
   --datatype ci16_le \
   --iridium-annotate
 ```
+### 4.6 Stopping an ingest safely
 
-## 5. List Captures
+**Press Ctrl+C to stop the ingest.** This is the supported stop action: AeroLake
+stops the process and deletes the metadata, data, and sidecar objects created by
+that unsuccessful attempt.
 
-```bash
-uv run aerolake-list
-uv run aerolake-list --signal-type iridium
-uv run aerolake-list --prefix iridium/
+Other ways of stopping the command do **not** guarantee cleanup:
+
+- **Ctrl+Z** only pauses the process (`SIGSTOP`); it does not delete anything.
+  To stop and clean up afterward, run `fg` and then press Ctrl+C.
+- Closing the terminal, killing the shell, or using an uncatchable kill can
+  leave already-uploaded objects behind because AeroLake does not get a chance
+  to run its cleanup handler.
+
+Use Ctrl+C when you want an interrupted ingest to be removed from storage.
+
+## 5. Query Recordings (List Captures)
+
+Use `aerolake-list --catalog iqengine` with at least one filter to run the CLI
+equivalent of IQEngine's Query Recordings panel. Configure IQEngine in the
+repository's local `.env` file (do not commit credentials):
+
+```dotenv
+AEROLAKE_IQENGINE_URL=https://<iqengine-host>
+AEROLAKE_IQENGINE_TOKEN=<token-if-required>
+AEROLAKE_IQENGINE_ACCOUNT=<datasource-account>
+AEROLAKE_IQENGINE_CONTAINER=<datasource-container>
 ```
 
-By default, `aerolake-list --catalog auto` uses the IQEngine catalog when
-`AEROLAKE_IQENGINE_URL` is configured and falls back to the MinIO tag catalog
-when IQEngine is disabled or unavailable. Select a source explicitly with
-`--catalog iqengine` or `--catalog minio`.
+These variables are listed in `.env.example`; they are commented because
+IQEngine integration is optional. Always include both `--catalog iqengine` and
+at least one filter when testing IQEngine:
+
+```bash
+uv run aerolake-list --catalog iqengine \
+  --frequency "1621e6-1623e6" \
+  --signal-type iridium \
+  --hardware bladerf \
+  --date "2026-09-01/2026-09-02" \
+  --geolocation "45.5017,-73.5673" \
+  --description "flight test" \
+  --text "newflight" \
+  --operator "Camila Nino Francia" \
+  --location "Montreal" \
+  --recorder "aerolake-ingest" \
+  --json
+```
+
+Use the value format accepted by the configured IQEngine API for ranges, dates,
+and geolocation. For a simple smoke test:
+
+```bash
+uv run aerolake-list --catalog iqengine --signal-type iridium --json
+```
+
+The CLI returns JSON containing the selected catalog, freshness state, filters,
+match count, and capture keys. A successful IQEngine response should contain
+`"catalog": "iqengine"`.
+
+For a direct MinIO query, use only tag filters:
+
+```bash
+uv run aerolake-list --catalog minio --signal-type iridium --hardware bladerf --json
+```
+
+MinIO does not provide the MongoDB metadata query layer, so `--frequency`,
+`--date`, `--geolocation`, `--description`, `--text`, `--operator`,
+`--location`, and `--recorder` require IQEngine.
+
+To test IQEngine specifically, use the explicit catalog and a filter shown
+above. If it fails, check the URL, token/account/container settings, and
+whether the capture has been refreshed in IQEngine. `--catalog auto` uses
+IQEngine only when configured and available; otherwise it falls back to MinIO.
+With no filters, that fallback lists every complete MinIO capture.
 
 IQEngine searches are read-only API calls. AeroLake never accesses IQEngine's
 MongoDB. When the configured freshness interval has elapsed, a single
