@@ -96,6 +96,30 @@ If the recording still does not show up, verify that the file pair exists and th
 
 The Query Recordings panel is the main search tool.
 
+The same catalog can be queried through the MongoDB-backed integration API:
+
+```http
+GET /api/v1/integration/datasources/query
+```
+
+Supported query parameters are `account`, `container`, `min_frequency`,
+`max_frequency`, `min_datetime`, `max_datetime`, `author`, `location`,
+`signal_type`, `hw`, `operator`, `recorder`, and `text`. The API applies these
+filters to active catalog records and enforces datasource access rules. It does
+not expose arbitrary MongoDB queries.
+
+For example:
+
+```bash
+curl "https://sites.fast.etsmtl.ca/api/v1/integration/datasources/query?author=camila"
+curl "https://sites.fast.etsmtl.ca/api/v1/integration/datasources/query?location=montreal"
+```
+
+Location matching is case-insensitive substring matching, so `montreal` can
+match a metadata value such as `Montreal, Quebec`. Combine filters by adding
+more query parameters. Repeat `account` or `container` when selecting multiple
+datasources.
+
 Useful filters include:
 
 - **Frequency**: search a band or range

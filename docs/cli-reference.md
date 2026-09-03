@@ -307,37 +307,41 @@ Use Ctrl+C when you want an interrupted ingest to be removed from storage.
 ## 5. Query Recordings (List Captures)
 
 Use `aerolake-list --catalog iqengine` with at least one filter to run the CLI
-equivalent of IQEngine's Query Recordings panel. Configure IQEngine in the
-repository's local `.env` file (do not commit credentials):
+equivalent of IQEngine's Query Recordings panel. 
+
+To initialize the catalog queries, run:
+```bash
+bash init-sync.sh # From wsl/linux to sync catalog query OR double-click on init-sync.bat for Windows
+```
+Also, configure IQEngine in the repository's local `.env` file (do not commit credentials):
 
 ```dotenv
 AEROLAKE_IQENGINE_URL=https://<iqengine-host>
-AEROLAKE_IQENGINE_TOKEN=<token-if-required>
 AEROLAKE_IQENGINE_ACCOUNT=<datasource-account>
 AEROLAKE_IQENGINE_CONTAINER=<datasource-container>
 ```
 
-These variables are listed in `.env.example`; they are commented because
-IQEngine integration is optional. Always include both `--catalog iqengine` and
+These variables are listed in `.env.example`. Always include both `--catalog iqengine` and
 at least one filter when testing IQEngine:
 
 ```bash
 uv run aerolake-list --catalog iqengine \
-  --frequency "1621e6-1623e6" \
+  --min-frequency 1621000000 \
+  --max-frequency 1623000000 \
   --signal-type iridium \
   --hardware bladerf \
-  --date "2026-09-01/2026-09-02" \
-  --geolocation "45.5017,-73.5673" \
-  --description "flight test" \
+  --min-datetime "2026-09-01T00:00:00Z" \
+  --max-datetime "2026-09-02T23:59:59Z" \
+  --author "Camila Nino Francia" \
+  --location "Montreal" \
   --text "newflight" \
   --operator "Camila Nino Francia" \
-  --location "Montreal" \
   --recorder "aerolake-ingest" \
   --json
 ```
 
-Use the value format accepted by the configured IQEngine API for ranges, dates,
-and geolocation. For a simple smoke test:
+Use the value format accepted by the configured IQEngine API for frequency and
+datetime bounds. For a simple smoke test:
 
 ```bash
 uv run aerolake-list --catalog iqengine --signal-type iridium --json
@@ -347,15 +351,22 @@ The CLI returns JSON containing the selected catalog, freshness state, filters,
 match count, and capture keys. A successful IQEngine response should contain
 `"catalog": "iqengine"`.
 
+`--catalog iqengine` is strict: if `AEROLAKE_IQENGINE_URL` is not configured,
+the command reports an IQEngine configuration error instead of querying MinIO.
+Use `--json` when testing so the selected catalog is visible in the result;
+the human-readable table does not display the catalog source.
+
 For a direct MinIO query, use only tag filters:
 
 ```bash
 uv run aerolake-list --catalog minio --signal-type iridium --hardware bladerf --json
 ```
 
-MinIO does not provide the MongoDB metadata query layer, so `--frequency`,
-`--date`, `--geolocation`, `--description`, `--text`, `--operator`,
-`--location`, and `--recorder` require IQEngine.
+The IQEngine endpoint supports account and container selectors, frequency and
+datetime bounds, author, location, signal type, hardware, operator, recorder,
+and text search. Repeat `--account` or `--container` to query multiple values.
+MinIO does not provide the MongoDB metadata query layer, so these metadata
+filters require IQEngine.
 
 To test IQEngine specifically, use the explicit catalog and a filter shown
 above. If it fails, check the URL, token/account/container settings, and
@@ -373,7 +384,7 @@ capture reading/replay continues to use AeroLake's existing storage paths.
 
 Listing either source avoids downloading IQ data.
 
-## 6.Collections
+## 6. Collections
 
 ```bash
 uv run aerolake-collection \

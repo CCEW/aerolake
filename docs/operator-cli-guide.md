@@ -65,6 +65,11 @@ This is the normal capture workflow when the system is recording directly from a
 
 ### C. List existing captures
 
+To initialize the catalog queries, run:
+```bash
+bash init-sync.sh # From wsl/linux to sync catalog query OR double-click on init-sync.bat for Windows
+```
+CLI examples:
 ```bash
 uv run aerolake-list
 uv run aerolake-list --signal-type iridium
@@ -79,22 +84,23 @@ at least one filter:
 
 ```bash
 uv run aerolake-list --catalog iqengine \
-   --frequency "1621e6-1623e6" \
+   --min-frequency 1621000000 \
+   --max-frequency 1623000000 \
    --signal-type iridium \
    --hardware bladerf \
-   --date "2026-09-01/2026-09-02" \
-   --geolocation "45.5017,-73.5673" \
-   --description "flight test" \
+   --min-datetime "2026-09-01T00:00:00Z" \
+   --max-datetime "2026-09-02T23:59:59Z" \
+   --author "Camila Nino Francia" \
+   --location "Montreal" \
    --text "newflight" \
    --operator "Camila Nino Francia" \
-   --location "Montreal" \
    --recorder "aerolake-ingest" \
    --json
 ```
 
-The exact range, date, and geolocation value formats are interpreted by the
-configured IQEngine API. These metadata filters require `--catalog iqengine`;
-direct MinIO queries support signal type, hardware, and generic tags.
+Use the datetime format accepted by the configured IQEngine API. These metadata
+filters require `--catalog iqengine`; direct MinIO queries support signal type,
+hardware, and generic tags.
 
 Do not use `--catalog auto` when you need to verify IQEngine specifically.
 `auto` falls back to MinIO when IQEngine is not configured or unavailable. With

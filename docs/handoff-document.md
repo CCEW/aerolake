@@ -409,8 +409,8 @@ confirmation before pushing. Lower-level equivalent:
 - **In the AeroLake interface**: **▶ Playback** tab → pick a capture →
   metadata + preview → *Start / Window* sliders to view the **spectrum of any
   moment** (only the requested window is downloaded — HTTP Range).
-- **Command line**: `uv run aerolake-list --signal-type gnss_l1` (filterable
-  catalogue without downloading a single signal byte).
+- **Command line**: Initialize the catalog queries `init-sync.sh` from wsl/linux or double-click on `init-sync.bat` from Windows . Then, `uv run aerolake-list --signal-type gnss_l1`
+  (filterable catalogue without downloading a single signal byte).
 
 ## 4.4 Replay a capture — the three modes
 

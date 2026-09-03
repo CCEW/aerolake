@@ -141,6 +141,7 @@ Or create your own, e.g. `examples/my-test.json`, then
 
 ```bash
 ./acquire.sh examples/test-rtlsdr.json     # capture, then answer "y" to push
+bash init-sync.sh # To initialize catalog query
 uv run aerolake-list --signal-type test_banc   # does the capture appear?
 ```
 
