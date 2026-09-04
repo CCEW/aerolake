@@ -48,7 +48,7 @@ def _settings(**overrides) -> Settings:
 
 
 def test_disabled_client_requires_explicit_configuration(test_settings) -> None:
-    client = IQEngineClient(test_settings)
+    client = IQEngineClient(test_settings.model_copy(update={"iqengine_url": ""}))
 
     assert not client.enabled
     with pytest.raises(IQEngineError, match="integration is disabled"):
@@ -66,9 +66,11 @@ def test_sync_uses_bearer_auth_and_datasource_path() -> None:
     response = client.sync()
 
     assert response.body == {"status": "complete"}
-    assert requests[0][0].method == "PUT"
+    # Sync queues a background job, so it is a POST against the versioned
+    # integration API (see _SYNC_PATH), not an idempotent PUT.
+    assert requests[0][0].method == "POST"
     assert requests[0][0].full_url == (
-        "https://iqengine.example.test/api-root/api/datasources/"
+        "https://iqengine.example.test/api-root/api/v1/integration/datasources/"
         "us-east%2F1/captures%20bucket/sync"
     )
     assert requests[0][0].get_header("Authorization") == "Bearer service-token"
@@ -87,13 +89,13 @@ def test_search_encodes_filters() -> None:
 
     response = IQEngineClient(_settings(), opener=opener).search(
         signal_type="iridium",
-        center_frequency=1_626_000_000,
+        min_frequency=1_626_000_000,
     )
 
     assert response.body[0]["file_path"] == "recordings/example"
     assert requests[0].full_url == (
-        "https://iqengine.example.test/api-root/api/datasources/query?"
-        "signal_type=iridium&center_frequency=1626000000"
+        "https://iqengine.example.test/api-root/api/v1/integration/datasources/query?"
+        "signal_type=iridium&min_frequency=1626000000"
     )
 
 
@@ -130,9 +132,17 @@ def test_http_error_is_wrapped() -> None:
 
 
 def test_catalog_normalizes_rows_and_triggers_one_lazy_sync(tmp_path) -> None:
+    """search() returns stubs; each row's fields come from a per-path metadata call.
+
+    The catalog does a two-step fetch: the query returns lightweight stubs
+    carrying only a path, then one metadata request per stub returns the full
+    SigMF document that the row's tags/metadata are mapped from.
+    """
+
     class FakeClient:
         def __init__(self) -> None:
             self.sync_calls = 0
+            self.metadata_paths: list[str] = []
 
         def sync(self):
             self.sync_calls += 1
@@ -142,7 +152,21 @@ def test_catalog_normalizes_rows_and_triggers_one_lazy_sync(tmp_path) -> None:
             assert filters == {"prefix": "iridium/", "signal_type": "iridium"}
             return CatalogResponse(
                 200,
-                [{"file_path": "iridium/a/capture.sigmf-meta", "tags": {"signal-type": "iridium"}}],
+                [{"file_path": "iridium/a/capture.sigmf-meta"}],
+            )
+
+        def metadata(self, filepath):
+            self.metadata_paths.append(filepath)
+            return CatalogResponse(
+                200,
+                {
+                    "global": {
+                        "core:hw": "bladerf",
+                        "core:sample_rate": 10000000.0,
+                        "aerolake:signal_type": "iridium",
+                    },
+                    "captures": [{"core:frequency": 1622000000.0}],
+                },
             )
 
     settings = _settings(
@@ -154,8 +178,13 @@ def test_catalog_normalizes_rows_and_triggers_one_lazy_sync(tmp_path) -> None:
 
     result = catalog.search(prefix="iridium/", filters={"signal_type": "iridium"})
 
+    assert fake.metadata_paths == ["iridium/a/capture.sigmf-meta"]
     assert result.rows[0].data_key == "iridium/a/capture.sigmf-data"
-    assert result.rows[0].tags == {"signal-type": "iridium"}
+    assert result.rows[0].tags == {"hardware": "bladerf", "signal-type": "iridium"}
+    assert result.rows[0].metadata == {
+        "sample-rate": "10000000.0",
+        "center-freq": "1622000000.0",
+    }
     assert result.stale is True
     assert result.sync_in_flight is True
 
@@ -163,3 +192,33 @@ def test_catalog_normalizes_rows_and_triggers_one_lazy_sync(tmp_path) -> None:
         if fake.sync_calls:
             break
     assert fake.sync_calls == 1
+
+
+def test_catalog_skips_rows_whose_metadata_lookup_fails(tmp_path) -> None:
+    """One unreadable capture must not sink the whole listing."""
+
+    class FakeClient:
+        def sync(self):
+            return CatalogResponse(200, {"status": "queued"})
+
+        def search(self, **filters):
+            return CatalogResponse(
+                200,
+                [
+                    {"file_path": "iridium/bad/capture.sigmf-meta"},
+                    {"file_path": "iridium/good/capture.sigmf-meta"},
+                ],
+            )
+
+        def metadata(self, filepath):
+            if "bad" in filepath:
+                raise IQEngineError("HTTP 404: not found")
+            return CatalogResponse(200, {"global": {"core:hw": "bladerf"}})
+
+    settings = _settings(
+        iqengine_sync_interval_s=3600,
+        iqengine_sync_state_path=str(tmp_path / "sync-state.json"),
+    )
+    result = IQEngineCatalog(FakeClient(), settings).search(prefix="iridium/")
+
+    assert [row.data_key for row in result.rows] == ["iridium/good/capture.sigmf-data"]

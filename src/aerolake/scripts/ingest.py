@@ -2,6 +2,8 @@
 
 With metadata flags, this command treats the input as raw IQ, creates a fresh
 SigMF meta object, normalizes integer datatypes to cf32, and uploads both files.
+For a single file without a same-basename meta file, it first writes an
+editable placeholder meta file and stops so the operator can complete it.
 With no metadata flags, it expects an existing same-basename .sigmf-meta,
 checks the pair, adds a missing SHA-512, and normalizes ``ci16_le`` data to
 the lake's canonical ``cf32_le`` format before uploading. ``--ensure-sha512``
@@ -34,10 +36,12 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
 import re
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -45,6 +49,68 @@ from rich.table import Table
 from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageClient, StorageError
 from aerolake.producer.ingest import IngestResult, ingest_files, ingest_sigmf_pair
+
+
+def _meta_path(data_path: str) -> Path:
+    """Return the same-basename SigMF metadata path for one data file."""
+    path = Path(data_path)
+    if str(path).endswith(".sigmf-data"):
+        return Path(str(path)[: -len(".sigmf-data")] + ".sigmf-meta")
+    return path.with_suffix(".sigmf-meta")
+
+
+def _write_metadata_template(
+    *,
+    data_path: str,
+    signal_type: str,
+    sample_rate: float,
+    center_freq: float,
+    datatype: str,
+    hardware: str,
+) -> Path:
+    """Write an editable metadata template before generated-meta ingest."""
+    meta_path = _meta_path(data_path)
+    source_bytes_per_sample = {"cf32": 8, "cu8": 2, "cs16": 4, "ci16_le": 4, "cs32": 8}[datatype]
+    sample_count = os.path.getsize(data_path) // source_bytes_per_sample
+    duration_s = sample_count / sample_rate if sample_rate > 0 else 0.0
+    metadata = {
+        "global": {
+            "core:author": "AeroLake",
+            "core:datatype": datatype,
+            "core:sample_rate": sample_rate,
+            "core:description": (
+                f"Ingested {datatype} capture at {sample_rate / 1e6:.3f} MS/s, "
+                f"{center_freq / 1e6:.3f} MHz"
+            ),
+            "core:recorder": "aerolake-ingest",
+            "core:hw": hardware,
+            "core:version": "1.2.6",
+            "core:num_channels": 1,
+            "core:offset": 0,
+            "core:extensions": [
+                {"name": "aerolake", "version": "1.0.0", "optional": True}
+            ],
+            "core:sha512": "<missing:core:sha512>",
+            "aerolake:duration_s": duration_s,
+            "aerolake:mobile": False,
+            "aerolake:operator": "<missing:aerolake:operator>",
+            "aerolake:location": "<missing:aerolake:location>",
+            "aerolake:sample_count": sample_count,
+            "aerolake:signal_type": signal_type,
+        },
+        "captures": [
+            {
+                # When the signal was recorded — only the operator knows this.
+                # Ingest always runs after the capture, so it must not guess.
+                "core:datetime": "<missing:captures[0].core:datetime>",
+                "core:frequency": center_freq,
+                "core:sample_start": 0,
+            }
+        ],
+        "annotations": [],
+    }
+    meta_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    return meta_path
 
 
 def _natural_key(path: str) -> tuple[int, str]:
@@ -158,6 +224,28 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
             "when generating metadata from CLI flags.[/]"
         )
         return 2
+    if generated_meta_mode and len(files) == 1 and not _meta_path(files[0]).exists():
+        assert args.signal_type is not None
+        assert args.sample_rate is not None
+        assert args.center_freq is not None
+        datatype = args.datatype or "cf32"
+        hardware = args.hardware or "unknown"
+        meta_path = _write_metadata_template(
+            data_path=files[0],
+            signal_type=args.signal_type,
+            sample_rate=args.sample_rate,
+            center_freq=args.center_freq,
+            datatype=datatype,
+            hardware=hardware,
+        )
+        console.print(
+            f"[bold yellow]! No SigMF meta file found. Created an editable template:[/] {meta_path}"
+        )
+        console.print(
+            "Fill every <missing:...> value with an appropriate value, then rerun "
+            "ingest without metadata flags. Nothing was uploaded."
+        )
+        return 2
     if not generated_meta_mode and len(files) != 1:
         console.print(
             "[bold red]x Existing SigMF-pair ingest accepts one .sigmf-data file. "
@@ -187,7 +275,12 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
             + (f" [dim](annotations: {args.pypy})[/dim]" if args.iridium_annotate else "")
         )
 
-    with console.status("[bold cyan]Ingesting...[/]", spinner="dots"):
+    with console.status("[bold cyan]Ingesting...[/]", spinner="dots") as status:
+        # Several stages stream the whole capture; on a multi-GB file each takes
+        # minutes, so name the running stage instead of a single opaque spinner.
+        def on_phase(label: str) -> None:
+            status.update(f"[bold cyan]{label}...[/]")
+
         try:
             if generated_meta_mode:
                 result: IngestResult = ingest_files(
@@ -214,6 +307,7 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
                     iridium_extractor=args.iridium_extractor,
                     pypy=args.pypy,
                     storage_client=storage_client,
+                    on_phase=on_phase,
                 )
         except StorageError as exc:
             console.print(f"[bold red]x Storage error:[/] {exc}")

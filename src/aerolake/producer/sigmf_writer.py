@@ -310,7 +310,7 @@ def complete_canonical_metadata(
     defaults: dict[str, object] = {
         "core:author": "AeroLake",
         "core:description": description,
-        "core:recorder": "external-sigmf",
+        "core:recorder": "aerolake-ingest",
         "core:hw": "unknown",
         "core:version": SIGMF_VERSION,
         "core:num_channels": 1,
@@ -321,19 +321,37 @@ def complete_canonical_metadata(
         "aerolake:signal_type": "<missing:aerolake:signal_type>",
     }
     for field, value in defaults.items():
-        global_meta.setdefault(field, value)
-    global_meta["aerolake:operator"] = str(global_meta.get("core:author") or "AeroLake")
+        if field not in global_meta or _is_missing_placeholder(global_meta[field]):
+            global_meta[field] = value
+    if _is_missing_placeholder(global_meta.get("core:description")):
+        global_meta["core:description"] = description
+    if _is_missing_placeholder(global_meta.get("aerolake:operator")):
+        global_meta["aerolake:operator"] = str(global_meta.get("core:author") or "AeroLake")
     if sample_count is not None:
-        global_meta.setdefault("aerolake:sample_count", sample_count)
+        if "aerolake:sample_count" not in global_meta or _is_missing_placeholder(
+            global_meta["aerolake:sample_count"]
+        ):
+            global_meta["aerolake:sample_count"] = sample_count
         if isinstance(sample_rate, (int, float)) and sample_rate > 0:
-            global_meta.setdefault("aerolake:duration_s", sample_count / float(sample_rate))
+            if "aerolake:duration_s" not in global_meta or _is_missing_placeholder(
+                global_meta["aerolake:duration_s"]
+            ):
+                global_meta["aerolake:duration_s"] = sample_count / float(sample_rate)
         else:
-            global_meta.setdefault("aerolake:duration_s", "<missing:aerolake:duration_s>")
+            if "aerolake:duration_s" not in global_meta or _is_missing_placeholder(
+                global_meta["aerolake:duration_s"]
+            ):
+                global_meta["aerolake:duration_s"] = "<missing:aerolake:duration_s>"
     else:
         global_meta.setdefault("aerolake:sample_count", "<missing:aerolake:sample_count>")
         global_meta.setdefault("aerolake:duration_s", "<missing:aerolake:duration_s>")
 
     first_capture.setdefault("core:sample_start", 0)
+    # core:datetime is when the SIGNAL was recorded, which ingest cannot know:
+    # it always runs after the fact, so "now" would be the ingest time, not the
+    # capture time. Since this value also picks the bucket's date prefix, a
+    # fabricated timestamp files the capture under the wrong day permanently —
+    # so an unresolved value stays a placeholder for the operator to fill.
     first_capture.setdefault("core:datetime", "<missing:captures[0].core:datetime>")
     first_capture.setdefault("core:frequency", "<missing:captures[0].core:frequency>")
     metadata.setdefault("annotations", [])

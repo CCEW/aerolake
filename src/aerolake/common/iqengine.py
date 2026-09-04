@@ -68,8 +68,8 @@ class IQEngineClient:
     contract without spreading URL knowledge through AeroLake.
     """
 
-    _SYNC_PATH = "/api/datasources/{account}/{container}/sync"
-    _SEARCH_PATH = "/api/datasources/query"
+    _SYNC_PATH = "/api/v1/integration/datasources/{account}/{container}/sync"
+    _SEARCH_PATH = "/api/v1/integration/datasources/query"
     _META_PATH = "/api/datasources/{account}/{container}/{filepath}/meta"
 
     def __init__(
@@ -104,7 +104,7 @@ class IQEngineClient:
             raise IQEngineError("IQEngine integration is disabled; set AEROLAKE_IQENGINE_URL")
         url = urljoin(self._base_url, path.lstrip("/"))
         if params:
-            url = f"{url}?{urlencode({k: str(v) for k, v in params.items()})}"
+            url = f"{url}?{urlencode(params, doseq=True)}"
         return url
 
     def _request(
@@ -157,7 +157,7 @@ class IQEngineClient:
             account=quote(account, safe=""),
             container=quote(container, safe=""),
         )
-        return self._request("PUT", path)
+        return self._request("POST", path)
 
     def search(self, **filters: object) -> CatalogResponse:
         """Run a read-only catalog query using IQEngine's query parameters."""
@@ -273,32 +273,73 @@ class IQEngineCatalog:
                     return [item for item in value if isinstance(item, dict)]
         return []
 
-    @staticmethod
-    def _row(record: dict[str, Any]) -> CatalogRow | None:
-        raw_key = record.get("data_key") or record.get("file_path") or record.get("key")
-        if not isinstance(raw_key, str) or not raw_key:
-            return None
-        data_key = raw_key[:-len(".sigmf-meta")] + ".sigmf-data" if raw_key.endswith(".sigmf-meta") else raw_key
-        tags = record.get("tags")
-        metadata = record.get("metadata")
-        return CatalogRow(
-            data_key=data_key,
-            tags={str(k): str(v) for k, v in tags.items()} if isinstance(tags, dict) else {},
-            metadata={str(k): str(v) for k, v in metadata.items()}
-            if isinstance(metadata, dict)
-            else {},
-        )
-
     def search(self, *, prefix: str = "", filters: Mapping[str, object] | None = None) -> CatalogSearchResult:
         stale, in_flight, sync_error = self._ensure_fresh()
         query = dict(filters or {})
         if prefix:
             query.setdefault("prefix", prefix)
         response = self._client.search(**query)
-        rows = [row for record in self._records(response.body) if (row := self._row(record)) is not None]
+
+        rows = []
+        for record in self._records(response.body):
+            # Extract the path from the lightweight stub
+            filepath = record.get("data_key") or record.get("file_path") or record.get("key")
+            if not isinstance(filepath, str) or not filepath:
+                continue
+
+            try:
+                # Fetch the full SigMF metadata document for this specific capture
+                meta_response = self._client.metadata(filepath)
+                full_record = meta_response.body if isinstance(meta_response.body, dict) else {}
+
+                # Inject the path back into the full record so _row knows the identity
+                full_record["file_path"] = filepath
+
+                if (row := self._row(full_record)) is not None:
+                    rows.append(row)
+            except IQEngineError as e:
+                logger.warning("iqengine.metadata.failed", filepath=filepath, error=str(e))
+                continue
+
         return CatalogSearchResult(
             rows=rows,
             stale=stale,
             sync_in_flight=in_flight,
             sync_error=sync_error,
+        )
+
+    @staticmethod
+    def _row(record: dict[str, Any]) -> CatalogRow | None:
+        raw_key = record.get("data_key") or record.get("file_path") or record.get("key")
+        if not isinstance(raw_key, str) or not raw_key:
+            return None
+        data_key = raw_key[:-len(".sigmf-meta")] + ".sigmf-data" if raw_key.endswith(".sigmf-meta") else raw_key
+
+        tags = {}
+        metadata = {}
+
+        # Extract native SigMF objects directly from the root of the metadata response
+        sigmf_global = record.get("global") or {}
+        sigmf_captures = record.get("captures") or [{}]
+        capture_0 = sigmf_captures[0] if isinstance(sigmf_captures, list) and len(sigmf_captures) > 0 else {}
+
+        # Map standard SigMF fields into the exact keys catalog.py expects
+        if "core:hw" in sigmf_global:
+            tags["hardware"] = str(sigmf_global["core:hw"])
+
+        if "core:sample_rate" in sigmf_global:
+            metadata["sample-rate"] = str(sigmf_global["core:sample_rate"])
+
+        if "core:frequency" in capture_0:
+            metadata["center-freq"] = str(capture_0["core:frequency"])
+
+        # Extract signal_type
+        st = record.get("aerolake:signal_type") or sigmf_global.get("aerolake:signal_type")
+        if st:
+            tags["signal-type"] = str(st)
+
+        return CatalogRow(
+            data_key=data_key,
+            tags=tags,
+            metadata=metadata,
         )

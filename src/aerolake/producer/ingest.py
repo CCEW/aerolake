@@ -27,10 +27,12 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -111,6 +113,31 @@ class IngestResult:
     sidecar_keys: tuple[str, ...]
     sample_count: int
     bytes_uploaded: int
+
+
+@contextmanager
+def _cleanup_on_failure(client: StorageClient, keys: list[str]) -> Iterator[None]:
+    """Delete objects already created if ingest is interrupted or fails."""
+    previous_handlers = {
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+    }
+
+    def _raise_interrupt(signum: int, frame: Any) -> None:
+        raise KeyboardInterrupt(f"received signal {signum}")
+
+    signal.signal(signal.SIGINT, _raise_interrupt)
+    signal.signal(signal.SIGTERM, _raise_interrupt)
+    try:
+        yield
+    except BaseException:
+        for key in keys:
+            with suppress(BaseException):
+                client.delete_object(key)
+        raise
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 def _iter_cf32_chunks(file_path: str, datatype: str, chunk_samples: int) -> Iterator[bytes]:
@@ -499,20 +526,73 @@ def ingest_sigmf_pair(
     iridium_extractor: str = "iridium-extractor",
     pypy: str = "pypy3",
     storage_client: StorageClient | None = None,
+    on_phase: Callable[[str], None] | None = None,
 ) -> IngestResult:
     """Upload an existing SigMF data/meta pair.
 
     The pair is checked before upload. Missing hashes are added automatically,
     and ``ci16_le`` data is normalized to the lake's canonical ``cf32_le``
     representation. ``ensure_sha512`` is retained for API compatibility.
+
+    ``on_phase`` is called with a short label ("Checking metadata",
+    "Annotating", ...) as each stage begins. Several stages stream the whole
+    capture, so on a multi-GB file each can take minutes — the callback lets a
+    CLI show which one is running instead of one opaque "Ingesting" spinner.
     """
+    def phase(label: str) -> None:
+        if on_phase is not None:
+            on_phase(label)
+
+    phase("Checking metadata")
     meta_path = _sigmf_meta_path(file_path)
     if not meta_path.exists():
         raise ValueError(f"Missing SigMF meta file next to data file: {meta_path}")
 
     meta_bytes = meta_path.read_bytes()
     metadata = json.loads(meta_bytes.decode("utf-8"))
+
+    # Hashing the .sigmf-data means a full read of a possibly multi-GB file, so
+    # it is deferred until something actually needs the digest. Everything that
+    # can reject the pair cheaply (datatype, alignment, missing fields) runs
+    # first, so a bad pair fails in milliseconds instead of after a long read.
+    _source_sha512: str | None = None
+
+    def source_sha512() -> str:
+        nonlocal _source_sha512
+        if _source_sha512 is None:
+            phase("Hashing capture")
+            hasher = hashlib.sha512()
+            for chunk in _iter_file_chunks(file_path):
+                hasher.update(chunk)
+            _source_sha512 = hasher.hexdigest()
+        return _source_sha512
+
+    def resolve_sha512_placeholder() -> None:
+        """Replace a placeholder/absent core:sha512 with the real digest.
+
+        The SigMF schema requires core:sha512 to match ``^[0-9a-fA-F]{128}``,
+        so the ``<missing:core:sha512>`` placeholder must be resolved before
+        anything calls ``SigMFFile.validate()`` — otherwise validation fails on
+        the one field ingest is supposed to compute for the operator.
+        """
+        nonlocal meta_bytes
+        block = metadata.get("global")
+        if not isinstance(block, dict):
+            return
+        current = block.get("core:sha512")
+        if isinstance(current, str) and re.fullmatch(r"[0-9a-fA-F]{128}", current):
+            if current != source_sha512():
+                raise ValueError(
+                    "Existing SigMF core:sha512 does not match the .sigmf-data bytes"
+                )
+            return
+        block["core:sha512"] = source_sha512()
+        meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
+
     if iridium_annotate:
+        # The annotator validates its output, so the digest must exist by now.
+        resolve_sha512_placeholder()
+        phase("Annotating (iridium-toolkit)")
         meta_bytes = _apply_iridium_annotations(
             file_path=file_path,
             meta_bytes=meta_bytes,
@@ -530,11 +610,6 @@ def ingest_sigmf_pair(
     datatype = str(global_meta.get("core:datatype") or "")
     if datatype not in _SIGMF_DATATYPE_BYTES_PER_SAMPLE:
         raise ValueError(f"Unsupported SigMF datatype {datatype!r}")
-    if datatype not in {"cf32", "cf32_le", "ci16_le"}:
-        raise ValueError(
-            f"Existing SigMF datatype {datatype!r} cannot be normalized; "
-            "supported pair datatypes are cf32, cf32_le, and ci16_le"
-        )
     bytes_per_sample = _SIGMF_DATATYPE_BYTES_PER_SAMPLE[datatype]
     total_size = os.path.getsize(file_path)
     if total_size % bytes_per_sample:
@@ -560,6 +635,8 @@ def ingest_sigmf_pair(
             + ", ".join(missing)
             + annotation_hint
         )
+    # Everything cheap has passed; now the digest is worth the full read.
+    resolve_sha512_placeholder()
     SigMFFile(metadata=metadata).validate()
     sample_rate = float(global_meta.get("core:sample_rate") or 0)
     center_freq = float(first_capture.get("core:frequency") or 0)
@@ -588,16 +665,8 @@ def ingest_sigmf_pair(
     data_key = f"{base_key}.sigmf-data"
     meta_key = f"{base_key}.sigmf-meta"
 
-    # Checklist: verify the source hash, normalize if needed, then hash the
-    # exact bytes that will be stored.
-    source_hasher = hashlib.sha512()
-    for chunk in _iter_file_chunks(file_path):
-        source_hasher.update(chunk)
-    source_sha512 = source_hasher.hexdigest()
-    existing_sha512 = global_meta.get("core:sha512")
-    if existing_sha512 is not None and existing_sha512 != source_sha512:
-        raise ValueError("Existing SigMF core:sha512 does not match the .sigmf-data bytes")
-
+    # The source hash was verified above; now hash the exact bytes that will be
+    # stored, which differ from the source only when we normalize the datatype.
     normalized = datatype == "ci16_le"
     stored_datatype = _TARGET_DATATYPE if datatype in {"cf32", "ci16_le"} else datatype
     if stored_datatype != datatype:
@@ -609,11 +678,16 @@ def ingest_sigmf_pair(
         else:
             yield from _iter_file_chunks(file_path)
 
-    stored_hasher = hashlib.sha512()
-    for chunk in _source_or_normalized_chunks():
-        stored_hasher.update(chunk)
-    stored_sha512 = stored_hasher.hexdigest()
-    if stored_datatype != datatype or existing_sha512 is None:
+    # When the bytes are stored as-is, the stored digest IS the source digest
+    # (already computed above) — no need to read the whole file a second time.
+    if normalized:
+        stored_hasher = hashlib.sha512()
+        for chunk in _source_or_normalized_chunks():
+            stored_hasher.update(chunk)
+        stored_sha512 = stored_hasher.hexdigest()
+    else:
+        stored_sha512 = source_sha512()
+    if global_meta.get("core:sha512") != stored_sha512:
         global_meta["core:sha512"] = stored_sha512
         SigMFFile(metadata=metadata).validate()
         meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
@@ -632,28 +706,33 @@ def ingest_sigmf_pair(
         "hardware": hardware,
     }
 
-    client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
-    data_bytes_uploaded = client.upload_multipart(
-        data_key,
-        _source_or_normalized_chunks(),
-        content_type="application/octet-stream",
-        metadata=data_metadata,
-        tags=data_tags,
-    )
-
+    cleanup_keys = [meta_key, data_key]
     sidecar_keys: tuple[str, ...] = ()
     sidecar_bytes = 0
-    iqengine_mode = _iqengine_mode(iqengine)
-    if iqengine_mode:
-        sidecar_keys, sidecar_bytes = _upload_iqengine_artifacts_for_sigmf_pair(
-            client,
-            base_key=base_key,
-            file_path=file_path,
-            datatype=datatype,
-            sample_rate=sample_rate,
-            center_freq=center_freq,
-            mode=iqengine_mode,
+    with _cleanup_on_failure(client, cleanup_keys):
+        phase("Uploading" + (" (normalizing to cf32_le)" if normalized else ""))
+        client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
+        data_bytes_uploaded = client.upload_multipart(
+            data_key,
+            _source_or_normalized_chunks(),
+            content_type="application/octet-stream",
+            metadata=data_metadata,
+            tags=data_tags,
         )
+
+        iqengine_mode = _iqengine_mode(iqengine)
+        if iqengine_mode:
+            phase("Generating IQEngine artifacts")
+            sidecar_keys, sidecar_bytes = _upload_iqengine_artifacts_for_sigmf_pair(
+                client,
+                base_key=base_key,
+                file_path=file_path,
+                datatype=datatype,
+                sample_rate=sample_rate,
+                center_freq=center_freq,
+                mode=iqengine_mode,
+            )
+            cleanup_keys.extend(sidecar_keys)
 
     return IngestResult(
         session_id=session_id,
@@ -794,58 +873,58 @@ def ingest_files(
     # --- Upload: meta first, then data (streamed via multipart) -----------
     # Same ordering rule as the producer: a consumer racing between the two
     # objects sees interpretable JSON, not orphan bytes.
-    client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
-
-    data_metadata = {
-        "sample-rate": str(int(sample_rate)),
-        "center-freq": str(int(center_freq)),
-        "session-id": session_id,
-        "datatype": _TARGET_DATATYPE,
-        "sample-count": str(sample_count),
-    }
-    data_tags = {
-        "signal-type": signal_type,
-        "recorder": recorder,
-        "hardware": hardware,
-    }
-
-    # Hash the .sigmf-data WHILE it streams, so a multi-GB capture is hashed in
-    # the same single pass it is uploaded (no extra read of the files).
-    hasher = hashlib.sha512()
-
-    def _hashed_chunks() -> Iterator[bytes]:
-        for chunk in _iter_cf32_files(file_paths, datatype, chunk_samples):
-            hasher.update(chunk)
-            yield chunk
-
-    data_bytes_uploaded = client.upload_multipart(
-        data_key,
-        _hashed_chunks(),
-        content_type="application/octet-stream",
-        metadata=data_metadata,
-        tags=data_tags,
-    )
-
-    # Fold the computed hash into the metadata (core:sha512) and rewrite the
-    # small meta object. The meta still lands before the data; this only
-    # enriches it once the full hash is known.
-    global_meta["core:sha512"] = hasher.hexdigest()
-    meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
-    client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
-
+    cleanup_keys = [meta_key, data_key]
     sidecar_keys: tuple[str, ...] = ()
     sidecar_bytes = 0
-    iqengine_mode = _iqengine_mode(iqengine)
-    if iqengine_mode:
-        sidecar_keys, sidecar_bytes = _upload_iqengine_artifacts(
-            client,
-            base_key=base_key,
-            file_paths=file_paths,
-            datatype=datatype,
-            sample_rate=sample_rate,
-            center_freq=center_freq,
-            mode=iqengine_mode,
+    with _cleanup_on_failure(client, cleanup_keys):
+        client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
+
+        data_metadata = {
+            "sample-rate": str(int(sample_rate)),
+            "center-freq": str(int(center_freq)),
+            "session-id": session_id,
+            "datatype": _TARGET_DATATYPE,
+            "sample-count": str(sample_count),
+        }
+        data_tags = {
+            "signal-type": signal_type,
+            "recorder": recorder,
+            "hardware": hardware,
+        }
+
+        # Hash the .sigmf-data while it streams, so a multi-GB capture is
+        # hashed in the same single pass it is uploaded.
+        hasher = hashlib.sha512()
+
+        def _hashed_chunks() -> Iterator[bytes]:
+            for chunk in _iter_cf32_files(file_paths, datatype, chunk_samples):
+                hasher.update(chunk)
+                yield chunk
+
+        data_bytes_uploaded = client.upload_multipart(
+            data_key,
+            _hashed_chunks(),
+            content_type="application/octet-stream",
+            metadata=data_metadata,
+            tags=data_tags,
         )
+
+        global_meta["core:sha512"] = hasher.hexdigest()
+        meta_bytes = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
+        client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
+
+        iqengine_mode = _iqengine_mode(iqengine)
+        if iqengine_mode:
+            sidecar_keys, sidecar_bytes = _upload_iqengine_artifacts(
+                client,
+                base_key=base_key,
+                file_paths=file_paths,
+                datatype=datatype,
+                sample_rate=sample_rate,
+                center_freq=center_freq,
+                mode=iqengine_mode,
+            )
+            cleanup_keys.extend(sidecar_keys)
 
     log.info(
         "ingest.done",

@@ -14,6 +14,7 @@ import re
 
 import numpy as np
 import pytest
+from sigmf import SigMFFile
 
 import aerolake.producer.ingest as ingest_module
 import aerolake.scripts.ingest as ingest_script
@@ -175,6 +176,38 @@ def test_ingest_meta_uploaded_before_data_is_complete(
     # The meta is valid JSON with the expected fields.
     meta = json.loads(storage_client.download_bytes(result.meta_key))
     assert meta["captures"][0]["core:frequency"] == 1_575_420_000.0
+
+
+def test_ingest_interrupt_deletes_objects_created_before_failure(
+    storage_client: StorageClient, tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "capture.sigmf-data"
+    path.write_bytes(np.ones(100, dtype=np.complex64).tobytes())
+    deleted: list[str] = []
+    original_delete = storage_client.delete_object
+
+    def record_delete(key: str) -> None:
+        deleted.append(key)
+        original_delete(key)
+
+    monkeypatch.setattr(storage_client, "delete_object", record_delete)
+
+    def interrupted_upload(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(storage_client, "upload_multipart", interrupted_upload)
+
+    with pytest.raises(KeyboardInterrupt):
+        ingest_file(
+            file_path=str(path),
+            signal_type="gnss_l1",
+            sample_rate=2e6,
+            center_freq=1575.42e6,
+            storage_client=storage_client,
+        )
+
+    assert len(deleted) == 2
+    assert all(not storage_client.object_exists(key) for key in deleted)
 
 
 def test_ingest_uses_human_readable_datetime_hardware_folder(
@@ -436,6 +469,136 @@ def test_ingest_sigmf_pair_can_add_missing_sha512(
     assert meta_path.read_bytes() == original_meta_bytes
 
 
+def test_ingest_sigmf_pair_requires_operator_supplied_datetime(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    """A placeholder core:datetime must be reported, never replaced with "now".
+
+    Ingest always runs after the capture, so "now" is the ingest time, not the
+    recording time. It also selects the bucket's date prefix, so a fabricated
+    value files the capture under the wrong day permanently.
+    """
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(np.ones(128, dtype=np.complex64).tobytes())
+    meta = _canonical_meta(signal_type="iridium", center_freq=1_622_000_000)
+    meta["captures"][0]["core:datetime"] = "<missing:captures[0].core:datetime>"
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    with pytest.raises(ValueError, match=r"captures\[0\]\.core:datetime"):
+        ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
+
+    rewritten = json.loads(meta_path.read_text())
+    assert (
+        rewritten["captures"][0]["core:datetime"]
+        == "<missing:captures[0].core:datetime>"
+    )
+
+
+def test_ingest_sigmf_pair_preserves_operator_datetime_in_key_layout(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    """The operator's capture time drives the bucket date prefix, not today."""
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(np.ones(128, dtype=np.complex64).tobytes())
+    meta = _canonical_meta(signal_type="iridium", center_freq=1_622_000_000)
+    meta["captures"][0]["core:datetime"] = "2023-07-20T11:39:48.680Z"
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    result = ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
+
+    assert result.data_key.startswith("iridium/2023-07-20/")
+    uploaded = json.loads(storage_client.download_bytes(result.meta_key))
+    assert uploaded["captures"][0]["core:datetime"] == "2023-07-20T11:39:48.680Z"
+
+
+def test_ingest_sigmf_pair_resolves_placeholder_sha512_before_annotating(
+    storage_client: StorageClient, tmp_path, monkeypatch
+) -> None:
+    """A placeholder SHA must be computed before the annotator validates the meta.
+
+    The real annotator runs ``SigMFFile.validate()`` on its output, and the
+    schema rejects ``<missing:core:sha512>``. Regression: ingest used to hand
+    the placeholder straight to the annotator and blow up on the pattern check.
+    """
+    samples = np.arange(128, dtype=np.complex64)
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(samples.tobytes())
+    meta = _canonical_meta(
+        signal_type="iridium",
+        center_freq=1_622_000_000,
+        annotations=[],
+        **{"core:sha512": "<missing:core:sha512>"},
+    )
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    seen: dict[str, object] = {}
+
+    def fake_annotate(**kwargs) -> bytes:
+        annotated = json.loads(kwargs["meta_bytes"])
+        seen["sha512"] = annotated["global"]["core:sha512"]
+        annotated["annotations"] = [
+            {"core:sample_start": 3, "core:label": "Iridium frame"}
+        ]
+        # Mirror the real annotator: it validates before returning.
+        SigMFFile(metadata=annotated).validate()
+        return json.dumps(annotated, indent=2, sort_keys=True).encode("utf-8")
+
+    monkeypatch.setattr(ingest_module, "_apply_iridium_annotations", fake_annotate)
+
+    result = ingest_sigmf_pair(
+        file_path=str(data_path),
+        iridium_annotate=True,
+        storage_client=storage_client,
+    )
+
+    expected = hashlib.sha512(samples.tobytes()).hexdigest()
+    assert seen["sha512"] == expected
+    uploaded = json.loads(storage_client.download_bytes(result.meta_key))
+    assert uploaded["global"]["core:sha512"] == expected
+    assert uploaded["annotations"] == [
+        {"core:sample_start": 3, "core:label": "Iridium frame"}
+    ]
+
+
+def test_ingest_sigmf_pair_skips_hashing_when_meta_is_incomplete(
+    storage_client: StorageClient, tmp_path, monkeypatch
+) -> None:
+    """An incomplete pair must fail before reading the (possibly huge) data file.
+
+    Hashing a multi-GB capture takes minutes, so the cheap metadata checks run
+    first: the operator learns a field is missing immediately, not after a
+    full read that was going to be discarded anyway.
+    """
+    samples = np.arange(128, dtype=np.complex64)
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(samples.tobytes())
+    meta = _canonical_meta(
+        signal_type="iridium",
+        center_freq=1_622_000_000,
+        annotations=[],
+        **{"core:sha512": "<missing:core:sha512>"},
+    )
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    reads: list[str] = []
+    real_chunks = ingest_module._iter_file_chunks
+
+    def spy_chunks(path, *args, **kwargs):
+        reads.append(str(path))
+        return real_chunks(path, *args, **kwargs)
+
+    monkeypatch.setattr(ingest_module, "_iter_file_chunks", spy_chunks)
+
+    with pytest.raises(ValueError, match="annotations"):
+        ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
+
+    assert reads == [], "data file must not be hashed before metadata is complete"
+
+
 def test_ingest_sigmf_pair_rejects_empty_annotations_with_annotation_hint(
     storage_client: StorageClient, tmp_path
 ) -> None:
@@ -557,8 +720,21 @@ def test_ingest_cli_happy_path(storage_client: StorageClient, tmp_path, capsys) 
         storage_client=storage_client,
     )
 
-    assert code == 0
-    assert "ingested" in capsys.readouterr().out.lower()
+    assert code == 2
+    assert "created an editable template" in capsys.readouterr().out.lower()
+    metadata = json.loads((tmp_path / "capture.sigmf-meta").read_text())
+    global_meta = metadata["global"]
+    assert global_meta["core:author"] == "AeroLake"
+    assert global_meta["core:description"] == "Ingested cf32 capture at 2.000 MS/s, 1575.420 MHz"
+    assert global_meta["core:recorder"] == "aerolake-ingest"
+    assert global_meta["aerolake:sample_count"] == 100
+    assert global_meta["aerolake:duration_s"] == pytest.approx(0.00005)
+    # The recording time is the operator's to supply: ingest runs after the
+    # capture, so it leaves a placeholder rather than stamping "now".
+    assert (
+        metadata["captures"][0]["core:datetime"]
+        == "<missing:captures[0].core:datetime>"
+    )
 
 
 def test_ingest_cli_generates_iqengine_artifacts(
@@ -566,6 +742,7 @@ def test_ingest_cli_generates_iqengine_artifacts(
 ) -> None:
     path = tmp_path / "capture.sigmf-data"
     path.write_bytes(np.ones(4096, dtype=np.complex64).tobytes())
+    (tmp_path / "capture.sigmf-meta").write_text(json.dumps(_canonical_meta()))
 
     code = main(
         [
@@ -592,6 +769,7 @@ def test_ingest_cli_iqengine_creates_artifacts_without_local_sidecars(
 ) -> None:
     path = tmp_path / "capture.sigmf-data"
     path.write_bytes(np.ones(4096, dtype=np.complex64).tobytes())
+    (tmp_path / "capture.sigmf-meta").write_text(json.dumps(_canonical_meta()))
     assert not (tmp_path / "capture.jpg").exists()
     assert not (tmp_path / "capture.minimap").exists()
 
@@ -620,6 +798,7 @@ def test_ingest_cli_iqengine_redo_is_accepted(
 ) -> None:
     path = tmp_path / "capture.sigmf-data"
     path.write_bytes(np.ones(4096, dtype=np.complex64).tobytes())
+    (tmp_path / "capture.sigmf-meta").write_text(json.dumps(_canonical_meta()))
 
     code = main(
         [
@@ -649,6 +828,7 @@ def test_ingest_cli_passes_iridium_annotation_options(
 ) -> None:
     path = tmp_path / "capture.sigmf-data"
     path.write_bytes(np.ones(100, dtype=np.complex64).tobytes())
+    (tmp_path / "capture.sigmf-meta").write_text(json.dumps(_canonical_meta()))
     captured: dict[str, object] = {}
 
     def fake_ingest_files(**kwargs):

@@ -9,7 +9,9 @@ bytes are irrelevant here.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
+import aerolake.scripts.catalog as catalog_script
 from aerolake.common.storage import StorageClient
 from aerolake.consumer.reader import CaptureReader
 from aerolake.scripts.catalog import main
@@ -121,6 +123,88 @@ def test_generic_tag_filter(storage_client, capsys) -> None:
     report = _json_out(capsys)
     assert report["total"] == 1
     assert report["captures"][0]["data_key"] == "gnss_l1/A/capture.sigmf-data"
+
+
+def test_iqengine_query_forwards_query_recordings_filters(capsys) -> None:
+    class FakeCatalog:
+        def search(self, *, prefix, filters):
+            assert prefix == "iridium/"
+            assert filters == {
+                "min_frequency": 1621000000.0,
+                "max_frequency": 1623000000.0,
+                "signal_type": "iridium",
+                "hw": "bladerf",
+                "min_datetime": "2026-09-01T00:00:00Z",
+                "max_datetime": "2026-09-02T23:59:59Z",
+                "author": "Camila Nino Francia",
+                "location": "Montreal",
+                "text": "newflight",
+                "operator": "Camila Nino Francia",
+                "recorder": "aerolake-ingest",
+                "account": ["aerolake", "fast-minio"],
+                "container": ["sigmf"],
+            }
+            from aerolake.common.iqengine import CatalogSearchResult
+
+            return CatalogSearchResult([], False, False)
+
+    exit_code = main(
+        [
+            "--catalog",
+            "iqengine",
+            "--prefix",
+            "iridium/",
+            "--min-frequency",
+            "1621000000",
+            "--max-frequency",
+            "1623000000",
+            "--signal-type",
+            "iridium",
+            "--hardware",
+            "bladerf",
+            "--min-datetime",
+            "2026-09-01T00:00:00Z",
+            "--max-datetime",
+            "2026-09-02T23:59:59Z",
+            "--author",
+            "Camila Nino Francia",
+            "--location",
+            "Montreal",
+            "--text",
+            "newflight",
+            "--operator",
+            "Camila Nino Francia",
+            "--recorder",
+            "aerolake-ingest",
+            "--account",
+            "aerolake",
+            "--account",
+            "fast-minio",
+            "--container",
+            "sigmf",
+            "--json",
+        ],
+        catalog=FakeCatalog(),
+    )
+
+    assert exit_code == 0
+    assert '"total": 0' in capsys.readouterr().out
+
+
+def test_explicit_iqengine_requires_configuration(storage_client, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(
+        catalog_script,
+        "get_settings",
+        lambda: SimpleNamespace(iqengine_url=""),
+    )
+
+    exit_code = catalog_script.main(
+        ["--catalog", "iqengine", "--signal-type", "iridium"],
+        reader=CaptureReader(storage_client),
+    )
+
+    assert exit_code == 1
+    assert "IQEngine is not configured" in capsys.readouterr().out
 
 
 # --- Edge cases ----------------------------------------------------------

@@ -68,6 +68,17 @@ def _build_parser() -> argparse.ArgumentParser:
     # exact-match constraint on the corresponding tag.
     parser.add_argument("--signal-type", help="Filter on the signal-type tag.")
     parser.add_argument("--hardware", help="Filter on the hardware tag.")
+    parser.add_argument("--min-frequency", type=float, help="Minimum capture frequency in Hz.")
+    parser.add_argument("--max-frequency", type=float, help="Maximum capture frequency in Hz.")
+    parser.add_argument("--min-datetime", help="Earliest IQEngine capture datetime.")
+    parser.add_argument("--max-datetime", help="Latest IQEngine capture datetime.")
+    parser.add_argument("--text", help="Search text across IQEngine metadata fields.")
+    parser.add_argument("--author", help="Filter by metadata author.")
+    parser.add_argument("--location", help="Filter by capture location.")
+    parser.add_argument("--operator", help="Filter by recording operator.")
+    parser.add_argument("--recorder", help="Filter by recorder software.")
+    parser.add_argument("--account", action="append", default=[], help="Restrict the IQEngine datasource account (repeatable).")
+    parser.add_argument("--container", action="append", default=[], help="Restrict the IQEngine datasource container (repeatable).")
     # Generic escape hatch for any other tag, repeatable: --tag key=value.
     parser.add_argument(
         "--tag",
@@ -102,6 +113,24 @@ def _parse_filters(args: argparse.Namespace) -> dict[str, str]:
         filters["signal-type"] = args.signal_type
     if args.hardware is not None:
         filters["hardware"] = args.hardware
+    for name in (
+        "min_frequency",
+        "max_frequency",
+        "min_datetime",
+        "max_datetime",
+        "text",
+        "author",
+        "location",
+        "operator",
+        "recorder",
+    ):
+        value = getattr(args, name)
+        if value is not None:
+            filters[name] = value
+    for name in ("account", "container"):
+        values = getattr(args, name)
+        if values:
+            filters[name] = values
     # Then generic key=value pairs (these win if they repeat a named one).
     for raw in args.tag:
         if "=" not in raw:
@@ -111,6 +140,9 @@ def _parse_filters(args: argparse.Namespace) -> dict[str, str]:
             raise ValueError(f"--tag has an empty key: {raw!r}")
         filters[key] = value
     return filters
+
+
+_TAG_FILTERS = {"signal-type", "hardware"}
 
 
 def _list_matching(
@@ -200,17 +232,28 @@ def main(
     sync_in_flight = False
     sync_error = None
     try:
+        advanced_filters = set(filters) - _TAG_FILTERS
         use_iqengine = args.catalog == "iqengine" or (
             args.catalog == "auto" and not reader_was_injected
         )
+        if args.catalog == "iqengine" and not get_settings().iqengine_url and catalog is None:
+            raise IQEngineError(
+                "IQEngine is not configured; set AEROLAKE_IQENGINE_URL in .env"
+            )
+        if advanced_filters and not use_iqengine and catalog is None:
+            raise ValueError(
+                "These filters require IQEngine: " + ", ".join(sorted(advanced_filters))
+            )
         if catalog is not None or (use_iqengine and get_settings().iqengine_url):
             catalog = catalog or IQEngineCatalog()
-            query_filters = {key.replace("-", "_"): value for key, value in filters.items()}
+            query_filters = {
+                ("hw" if key == "hardware" else key.replace("-", "_")): value
+                for key, value in filters.items()
+            }
             result = catalog.search(prefix=args.prefix, filters=query_filters)
             rows = [
                 CaptureRow(data_key=row.data_key, tags=row.tags, metadata=row.metadata)
                 for row in result.rows
-                if all(row.tags.get(key) == value for key, value in filters.items())
             ]
             source = "iqengine"
             stale = result.stale
