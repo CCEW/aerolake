@@ -163,9 +163,15 @@ def _list_matching(
 
 
 def _fmt_hz(value: str | None, unit: str) -> str:
-    """Format a Hz string (from metadata) as MHz/MS/s; '—' if absent/bad."""
+    """Format a Hz string (from metadata) as MHz/MS/s; '—' if absent/bad.
+
+    Parsed as a float, not an int: SigMF stores rates and frequencies as JSON
+    numbers, so a catalog row can legitimately carry ``"10000000.0"``. Using
+    ``int()`` here rejected those and rendered an em dash for a value that was
+    present and valid.
+    """
     try:
-        return f"{int(value) / 1e6:.3f} {unit}"  # type: ignore[arg-type]
+        return f"{float(value) / 1e6:.3f} {unit}"  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return "—"
 

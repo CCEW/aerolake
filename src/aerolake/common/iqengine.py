@@ -60,6 +60,23 @@ class CatalogSearchResult:
 UrlOpener = Callable[..., Any]
 
 
+def _hz_string(value: Any) -> str:
+    """Render a SigMF frequency/rate as a whole-number string of hertz.
+
+    SigMF stores ``core:sample_rate`` and ``core:frequency`` as JSON *numbers*,
+    so a catalog document can carry either ``10000000`` or ``10000000.0``
+    depending on how the recorder wrote it. The catalog CLI parses these with
+    ``int()``, which rejects ``"10000000.0"`` — the column then renders as an
+    em dash. Normalising here keeps that display bug from depending on which
+    tool happened to write the metadata. A value that is not a number at all is
+    passed through unchanged rather than discarded.
+    """
+    try:
+        return str(int(float(value)))
+    except (TypeError, ValueError):
+        return str(value)
+
+
 class IQEngineClient:
     """Small, injectable client for IQEngine's catalog API.
 
@@ -328,10 +345,10 @@ class IQEngineCatalog:
             tags["hardware"] = str(sigmf_global["core:hw"])
 
         if "core:sample_rate" in sigmf_global:
-            metadata["sample-rate"] = str(sigmf_global["core:sample_rate"])
+            metadata["sample-rate"] = _hz_string(sigmf_global["core:sample_rate"])
 
         if "core:frequency" in capture_0:
-            metadata["center-freq"] = str(capture_0["core:frequency"])
+            metadata["center-freq"] = _hz_string(capture_0["core:frequency"])
 
         # Extract signal_type
         st = record.get("aerolake:signal_type") or sigmf_global.get("aerolake:signal_type")
