@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 import aerolake.scripts.catalog as catalog_script
 from aerolake.common.storage import StorageClient
 from aerolake.consumer.reader import CaptureReader
-from aerolake.scripts.catalog import main
+from aerolake.scripts.catalog import _fmt_hz, main
 
 
 def _seed(
@@ -205,6 +207,25 @@ def test_explicit_iqengine_requires_configuration(storage_client, capsys, monkey
 
     assert exit_code == 1
     assert "IQEngine is not configured" in capsys.readouterr().out
+
+
+# --- Number formatting ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("10000000", "10.000 MS/s"),
+        ("10000000.0", "10.000 MS/s"),  # SigMF numbers may carry a decimal
+        ("1.0e7", "10.000 MS/s"),
+        (None, "—"),
+        ("", "—"),
+        ("not-a-number", "—"),
+    ],
+)
+def test_fmt_hz_accepts_integer_and_decimal_strings(value, expected) -> None:
+    """A decimal Hz string is valid data, not a missing value."""
+    assert _fmt_hz(value, "MS/s") == expected
 
 
 # --- Edge cases ----------------------------------------------------------

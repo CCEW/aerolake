@@ -181,9 +181,10 @@ def test_catalog_normalizes_rows_and_triggers_one_lazy_sync(tmp_path) -> None:
     assert fake.metadata_paths == ["iridium/a/capture.sigmf-meta"]
     assert result.rows[0].data_key == "iridium/a/capture.sigmf-data"
     assert result.rows[0].tags == {"hardware": "bladerf", "signal-type": "iridium"}
+    # Normalised to whole hertz so the catalog CLI can parse them.
     assert result.rows[0].metadata == {
-        "sample-rate": "10000000.0",
-        "center-freq": "1622000000.0",
+        "sample-rate": "10000000",
+        "center-freq": "1622000000",
     }
     assert result.stale is True
     assert result.sync_in_flight is True
@@ -192,6 +193,42 @@ def test_catalog_normalizes_rows_and_triggers_one_lazy_sync(tmp_path) -> None:
         if fake.sync_calls:
             break
     assert fake.sync_calls == 1
+
+
+def test_catalog_renders_float_valued_rates_as_whole_hertz(tmp_path) -> None:
+    """SigMF numbers may be floats; the catalog columns must still render.
+
+    ``core:sample_rate``/``core:frequency`` are JSON numbers, so a document can
+    carry 10000000.0. The CLI parsed these with int(), which rejected the
+    decimal form and printed an em dash for a perfectly valid value.
+    """
+
+    class FakeClient:
+        def sync(self):
+            return CatalogResponse(200, {"status": "queued"})
+
+        def search(self, **filters):
+            return CatalogResponse(200, [{"file_path": "iridium/a/capture.sigmf-meta"}])
+
+        def metadata(self, filepath):
+            return CatalogResponse(
+                200,
+                {
+                    "global": {"core:sample_rate": 10000000.0},
+                    "captures": [{"core:frequency": 1622000000.0}],
+                },
+            )
+
+    settings = _settings(
+        iqengine_sync_interval_s=3600,
+        iqengine_sync_state_path=str(tmp_path / "sync-state.json"),
+    )
+    result = IQEngineCatalog(FakeClient(), settings).search(prefix="iridium/")
+
+    assert result.rows[0].metadata == {
+        "sample-rate": "10000000",
+        "center-freq": "1622000000",
+    }
 
 
 def test_catalog_skips_rows_whose_metadata_lookup_fails(tmp_path) -> None:

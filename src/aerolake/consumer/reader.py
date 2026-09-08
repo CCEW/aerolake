@@ -30,6 +30,61 @@ _SIGMF_DTYPE_TO_NUMPY: dict[str, np.dtype] = {
     "cf32_le": np.dtype("<c8"),  # complex64 little-endian
 }
 
+# Captures are stored in the datatype they were recorded in (ADR-024), so the
+# reader has to decode every format the lake accepts, not just cf32_le. Each
+# entry maps a SigMF datatype to the numpy dtype of its *scalars* (I and Q are
+# interleaved), the bytes one complex sample occupies, and the divisor that
+# brings integer scalars back to the normalised [-1, 1) float range.
+_SIGMF_INTERLEAVED: dict[str, tuple[np.dtype, int, float]] = {
+    "ci8": (np.dtype("i1"), 2, 128.0),
+    "ci8_le": (np.dtype("i1"), 2, 128.0),
+    "cu8": (np.dtype("u1"), 2, 127.5),
+    "cu8_le": (np.dtype("u1"), 2, 127.5),
+    "ci16_le": (np.dtype("<i2"), 4, 32768.0),
+    "ci16": (np.dtype("<i2"), 4, 32768.0),
+    "cs16": (np.dtype("<i2"), 4, 32768.0),
+    "ci32_le": (np.dtype("<i4"), 8, 2147483648.0),
+    "ci32": (np.dtype("<i4"), 8, 2147483648.0),
+    "cs32": (np.dtype("<i4"), 8, 2147483648.0),
+    "cf64_le": (np.dtype("<f8"), 16, 1.0),
+    "cf64": (np.dtype("<f8"), 16, 1.0),
+}
+
+
+def _bytes_per_sample(datatype: str) -> int:
+    """Bytes occupied by one complex sample of ``datatype``."""
+    if datatype in _SIGMF_DTYPE_TO_NUMPY:
+        return int(_SIGMF_DTYPE_TO_NUMPY[datatype].itemsize)
+    if datatype in _SIGMF_INTERLEAVED:
+        return _SIGMF_INTERLEAVED[datatype][1]
+    raise ValueError(
+        f"Unsupported SigMF datatype: {datatype!r}. "
+        f"Supported: {sorted(set(_SIGMF_DTYPE_TO_NUMPY) | set(_SIGMF_INTERLEAVED))}"
+    )
+
+
+def _decode_samples(data_bytes: bytes, datatype: str) -> np.ndarray:
+    """Decode raw capture bytes into complex64 samples.
+
+    ``cf32_le`` is already complex float32 and is reinterpreted in place. The
+    interleaved formats are read as scalar pairs and rescaled to [-1, 1) so a
+    caller sees the same normalised complex64 whatever the stored datatype is.
+    """
+    if datatype in _SIGMF_DTYPE_TO_NUMPY:
+        return np.frombuffer(data_bytes, dtype=_SIGMF_DTYPE_TO_NUMPY[datatype])
+
+    scalar_dtype, _, scale = _SIGMF_INTERLEAVED[datatype]
+    scalars = np.frombuffer(data_bytes, dtype=scalar_dtype)
+    # Drop a trailing half-sample rather than letting the reshape fail: a Range
+    # request can land mid-sample at the very end of an object.
+    scalars = scalars[: len(scalars) - (len(scalars) % 2)]
+    floats = scalars.astype(np.float32)
+    if datatype in {"cu8", "cu8_le"}:
+        floats = floats - 127.5  # unsigned: midpoint is 127.5, not 0
+    if scale != 1.0:
+        floats = floats / scale
+    return (floats[0::2] + 1j * floats[1::2]).astype(np.complex64)
+
 
 @dataclass(frozen=True)
 class CaptureInfo:
@@ -147,16 +202,11 @@ class CaptureReader:
         sigmf_meta = json.loads(meta_bytes.decode("utf-8"))
 
         datatype = sigmf_meta.get("global", {}).get("core:datatype")
-        if datatype not in _SIGMF_DTYPE_TO_NUMPY:
-            raise ValueError(
-                f"Unsupported SigMF datatype: {datatype!r}. "
-                f"Supported: {sorted(_SIGMF_DTYPE_TO_NUMPY)}"
-            )
-        np_dtype = _SIGMF_DTYPE_TO_NUMPY[datatype]
+        _bytes_per_sample(datatype)  # rejects unsupported datatypes early
 
         # Now the actual samples.
         data_bytes = self._storage.download_bytes(data_key)
-        samples = np.frombuffer(data_bytes, dtype=np_dtype)
+        samples = _decode_samples(data_bytes, datatype)
 
         log.info(
             "consumer.read.ok",
@@ -210,13 +260,9 @@ class CaptureReader:
         sigmf_meta = json.loads(self._storage.download_bytes(meta_key).decode("utf-8"))
 
         datatype = sigmf_meta.get("global", {}).get("core:datatype")
-        if datatype not in _SIGMF_DTYPE_TO_NUMPY:
-            raise ValueError(
-                f"Unsupported SigMF datatype: {datatype!r}. "
-                f"Supported: {sorted(_SIGMF_DTYPE_TO_NUMPY)}"
-            )
-        np_dtype = _SIGMF_DTYPE_TO_NUMPY[datatype]
-        bytes_per_sample = np_dtype.itemsize  # 8 for complex64
+        # 8 for cf32_le; 4 for ci16_le, 2 for cu8, ... — the byte maths below
+        # works for any stored datatype as long as this is right.
+        bytes_per_sample = _bytes_per_sample(datatype)
 
         sample_rate = float(sigmf_meta.get("global", {}).get("core:sample_rate", 0.0))
         if sample_rate <= 0:
@@ -234,12 +280,12 @@ class CaptureReader:
 
         if n_samples <= 0:
             # Window is empty (e.g. start past the end) — return no samples.
-            samples = np.empty(0, dtype=np_dtype)
+            samples = np.empty(0, dtype=np.complex64)
         else:
             start_byte = start_sample * bytes_per_sample
             end_byte = start_byte + n_samples * bytes_per_sample - 1  # inclusive
             data_bytes = self._storage.download_range(data_key, start_byte, end_byte)
-            samples = np.frombuffer(data_bytes, dtype=np_dtype)
+            samples = _decode_samples(data_bytes, datatype)
 
         log.info(
             "consumer.read_segment.ok",

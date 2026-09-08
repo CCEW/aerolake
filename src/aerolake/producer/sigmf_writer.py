@@ -116,6 +116,7 @@ def build_metadata(
     sample_rate: float,
     center_freq: float,
     capture_datetime: str,
+    datatype: str = SIGMF_DATATYPE_CF32_LE,
     data_sha512: str | None = None,
     author: str = "AeroLake",
     description: str = "AeroLake IQ capture",
@@ -137,9 +138,12 @@ def build_metadata(
 
     Capture and ingest both use this function. The data hash is optional while
     a streamed upload is in progress and is added before the final meta upload.
+    ``datatype`` defaults to cf32_le, which is what synthetic capture produces;
+    ingest passes the recording's own datatype, since captures are stored in
+    the format they were recorded in (ADR-024).
     """
     global_block: dict[str, object] = {
-        "core:datatype": SIGMF_DATATYPE_CF32_LE,
+        "core:datatype": datatype,
         "core:sample_rate": float(sample_rate),
         "core:author": author,
         "core:description": description,

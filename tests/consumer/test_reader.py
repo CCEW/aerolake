@@ -164,9 +164,11 @@ def test_read_raises_on_unsupported_datatype(
     reader: CaptureReader, storage_client: StorageClient
 ) -> None:
     """read should raise ValueError if the SigMF datatype is unknown."""
-    # Build a fake capture with an unsupported datatype.
+    # Build a fake capture with an unsupported datatype. Captures are stored in
+    # their recorded format (ADR-024), so the reader accepts every datatype the
+    # lake can hold — this one is a real-valued SigMF type it cannot decode.
     meta = {
-        "global": {"core:datatype": "ci8_le", "core:sample_rate": 1000.0, "core:version": "1.2.6"},
+        "global": {"core:datatype": "rf32_le", "core:sample_rate": 1000.0, "core:version": "1.2.6"},
         "captures": [{"core:sample_start": 0, "core:frequency": 1000.0}],
         "annotations": [],
     }
@@ -178,3 +180,57 @@ def test_read_raises_on_unsupported_datatype(
 
     with pytest.raises(ValueError, match="Unsupported SigMF datatype"):
         reader.read("bad/capture.sigmf-data")
+
+
+def test_read_decodes_ci16_le_stored_in_its_recorded_datatype(
+    reader: CaptureReader, storage_client: StorageClient
+) -> None:
+    """A capture stored as ci16_le decodes to normalised complex64 (ADR-024)."""
+    scalars = np.array([32767, -32768, 0, 16384], dtype="<i2")  # 2 complex samples
+    meta = {
+        "global": {
+            "core:datatype": "ci16_le",
+            "core:sample_rate": 1000.0,
+            "core:version": "1.2.6",
+        },
+        "captures": [{"core:sample_start": 0, "core:frequency": 1000.0}],
+        "annotations": [],
+    }
+    storage_client.upload_bytes("i16/capture.sigmf-meta", json.dumps(meta).encode("utf-8"))
+    storage_client.upload_bytes("i16/capture.sigmf-data", scalars.tobytes())
+
+    content = reader.read("i16/capture.sigmf-data")
+
+    assert content.samples.dtype == np.complex64
+    np.testing.assert_allclose(
+        content.samples,
+        np.array([32767 / 32768 - 1j, 0 + 0.5j], dtype=np.complex64),
+        rtol=1e-6,
+    )
+
+
+def test_read_segment_seeks_using_the_stored_datatype_width(
+    reader: CaptureReader, storage_client: StorageClient
+) -> None:
+    """Range maths must use the stored datatype's width, not a fixed 8 bytes."""
+    # 100 complex ci16_le samples (4 bytes each): I = n, Q = 0.
+    scalars = np.zeros(200, dtype="<i2")
+    scalars[0::2] = np.arange(100, dtype="<i2")
+    meta = {
+        "global": {
+            "core:datatype": "ci16_le",
+            "core:sample_rate": 100.0,
+            "core:version": "1.2.6",
+        },
+        "captures": [{"core:sample_start": 0, "core:frequency": 1000.0}],
+        "annotations": [],
+    }
+    storage_client.upload_bytes("seek/capture.sigmf-meta", json.dumps(meta).encode("utf-8"))
+    storage_client.upload_bytes("seek/capture.sigmf-data", scalars.tobytes())
+
+    # 100 samples at 100 S/s = 1 s total; take the window [0.5 s, 0.7 s).
+    content = reader.read_segment("seek/capture.sigmf-data", start_s=0.5, duration_s=0.2)
+
+    assert len(content.samples) == 20
+    # First sample of the window is source sample 50 -> I = 50/32768.
+    assert content.samples[0].real == pytest.approx(50 / 32768.0, rel=1e-6)

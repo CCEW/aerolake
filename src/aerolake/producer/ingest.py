@@ -9,11 +9,14 @@ conventions as the synthetic producer (ADR-003).
 
 Two things make this the "real data" entry point:
 
-1. **Datatype conversion.** SDRs dump different raw types — RTL-SDR gives
-   ``cu8`` (unsigned 8-bit), many tools give ``cs16`` (signed 16-bit), GNU
-   Radio's File Sink gives ``cf32`` (complex float32). We normalise everything
-   to **cf32 in [-1, 1]** on the way in, so the whole lake is homogeneous and
-   the quality metrics (which assume normalised cf32) just work.
+1. **Byte-for-byte preservation (ADR-024).** SDRs dump different raw types —
+   RTL-SDR gives ``cu8`` (unsigned 8-bit), many tools give ``cs16`` (signed
+   16-bit), GNU Radio's File Sink gives ``cf32`` (complex float32). We store
+   each capture **in the datatype it was recorded in** and declare that
+   datatype in ``core:datatype``. Converting ``ci16_le`` to ``cf32_le`` would
+   double the object size while adding no information, so the archive keeps
+   the original bytes and :mod:`aerolake.consumer.reader` decodes whatever it
+   finds into normalised complex64 at read time.
 
 2. **Streaming multipart upload.** We read the file and upload it **in chunks**
    via :meth:`StorageClient.upload_multipart`, so a capture larger than RAM is
@@ -67,8 +70,16 @@ _SOURCE_DTYPES: dict[str, tuple[np.dtype, int]] = {
     "cs32": (np.dtype("<i4"), 8),  # signed 32-bit LE (e.g. RFSoC), I,Q interleaved
 }
 
-# cf32 datatype string we store everywhere (SigMF spec).
-_TARGET_DATATYPE = "cf32_le"
+# The CLI's source-datatype names are not all spelled the way SigMF spells
+# them. Captures are stored unconverted (ADR-024), so the recorded bytes must
+# be described with the datatype string the SigMF spec defines for them.
+_SOURCE_TO_SIGMF_DATATYPE: dict[str, str] = {
+    "cf32": "cf32_le",
+    "cu8": "cu8",
+    "cs16": "ci16_le",
+    "ci16_le": "ci16_le",
+    "cs32": "ci32_le",
+}
 _IQENGINE_PREVIEW_SAMPLES = 2_000_000
 _LOCAL_TZ = ZoneInfo("America/Montreal")
 _IQENGINE_SIDECARS = (
@@ -530,9 +541,11 @@ def ingest_sigmf_pair(
 ) -> IngestResult:
     """Upload an existing SigMF data/meta pair.
 
-    The pair is checked before upload. Missing hashes are added automatically,
-    and ``ci16_le`` data is normalized to the lake's canonical ``cf32_le``
-    representation. ``ensure_sha512`` is retained for API compatibility.
+    The pair is checked before upload and missing hashes are added
+    automatically. The ``.sigmf-data`` is stored **byte-for-byte in its
+    recorded datatype** (ADR-024) — nothing is converted, so the object in the
+    lake is bit-identical to the file on disk. ``ensure_sha512`` is retained
+    for API compatibility.
 
     ``on_phase`` is called with a short label ("Checking metadata",
     "Annotating", ...) as each stage begins. Several stages stream the whole
@@ -601,6 +614,14 @@ def ingest_sigmf_pair(
             pypy_cmd=pypy,
         )
         metadata = json.loads(meta_bytes.decode("utf-8"))
+        # Persist the annotations next to the capture. Demodulating a multi-GB
+        # recording can take many minutes, so throwing that work away and
+        # keeping it only in the uploaded object would force a re-run to
+        # inspect, correct, or re-upload the annotated pair locally.
+        meta_path.write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     global_meta = metadata.get("global", {})
     captures = metadata.get("captures", [])
     first_capture = captures[0] if isinstance(captures, list) and captures else {}
@@ -619,6 +640,11 @@ def ingest_sigmf_pair(
     sample_count = total_size // bytes_per_sample
     missing = complete_canonical_metadata(metadata, sample_count=sample_count)
     if missing:
+        # The operator has to edit this file and run again, so hand it back as
+        # complete as ingest can make it: the hash is the one field AeroLake
+        # can work out on its own, and leaving the placeholder would mean the
+        # operator either copies a digest by hand or trips the schema next run.
+        resolve_sha512_placeholder()
         meta_path.write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -665,28 +691,11 @@ def ingest_sigmf_pair(
     data_key = f"{base_key}.sigmf-data"
     meta_key = f"{base_key}.sigmf-meta"
 
-    # The source hash was verified above; now hash the exact bytes that will be
-    # stored, which differ from the source only when we normalize the datatype.
-    normalized = datatype == "ci16_le"
-    stored_datatype = _TARGET_DATATYPE if datatype in {"cf32", "ci16_le"} else datatype
-    if stored_datatype != datatype:
-        global_meta["core:datatype"] = stored_datatype
-
-    def _source_or_normalized_chunks() -> Iterator[bytes]:
-        if normalized:
-            yield from _iter_cf32_chunks(file_path, datatype, 1_000_000)
-        else:
-            yield from _iter_file_chunks(file_path)
-
-    # When the bytes are stored as-is, the stored digest IS the source digest
-    # (already computed above) — no need to read the whole file a second time.
-    if normalized:
-        stored_hasher = hashlib.sha512()
-        for chunk in _source_or_normalized_chunks():
-            stored_hasher.update(chunk)
-        stored_sha512 = stored_hasher.hexdigest()
-    else:
-        stored_sha512 = source_sha512()
+    # The capture is stored byte-for-byte in its recorded datatype (ADR-024),
+    # so the stored digest IS the source digest already computed above and the
+    # file is never read a second time just to re-hash it.
+    stored_datatype = datatype
+    stored_sha512 = source_sha512()
     if global_meta.get("core:sha512") != stored_sha512:
         global_meta["core:sha512"] = stored_sha512
         SigMFFile(metadata=metadata).validate()
@@ -710,11 +719,11 @@ def ingest_sigmf_pair(
     sidecar_keys: tuple[str, ...] = ()
     sidecar_bytes = 0
     with _cleanup_on_failure(client, cleanup_keys):
-        phase("Uploading" + (" (normalizing to cf32_le)" if normalized else ""))
+        phase("Uploading")
         client.upload_bytes(meta_key, meta_bytes, content_type="application/json")
         data_bytes_uploaded = client.upload_multipart(
             data_key,
-            _source_or_normalized_chunks(),
+            _iter_file_chunks(file_path),
             content_type="application/octet-stream",
             metadata=data_metadata,
             tags=data_tags,
@@ -788,7 +797,8 @@ def ingest_files(
         Acquisition parameters (Hz) — go into the SigMF metadata.
     datatype
         Source datatype: ``cf32`` (default), ``cu8``, ``cs16`` or ``cs32``.
-        Anything but cf32 is converted to normalised cf32 on the way in.
+        The bytes are stored unconverted (ADR-024); this only tells AeroLake
+        how to size a sample and which SigMF ``core:datatype`` to declare.
     hardware
         Goes into the ``hardware`` tag + SigMF ``core:hw`` (e.g. ``rfsoc``).
     iqengine
@@ -837,17 +847,19 @@ def ingest_files(
     )
     log.info("ingest.start", total_size=total_size)
 
-    # --- Build + validate the SigMF metadata (always cf32_le on our side) --
+    # --- Build + validate the SigMF metadata (the source's own datatype) ---
     if description is None:
         description = (
             f"Ingested {datatype} capture at {sample_rate / 1e6:.3f} MS/s, "
             f"{center_freq / 1e6:.3f} MHz"
         )
+    stored_datatype = _SOURCE_TO_SIGMF_DATATYPE[datatype]
     metadata = build_metadata(
         sample_count=sample_count,
         sample_rate=sample_rate,
         center_freq=center_freq,
         capture_datetime=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        datatype=stored_datatype,
         author="AeroLake",
         description=description,
         recorder=recorder,
@@ -883,7 +895,7 @@ def ingest_files(
             "sample-rate": str(int(sample_rate)),
             "center-freq": str(int(center_freq)),
             "session-id": session_id,
-            "datatype": _TARGET_DATATYPE,
+            "datatype": stored_datatype,
             "sample-count": str(sample_count),
         }
         data_tags = {
@@ -893,13 +905,15 @@ def ingest_files(
         }
 
         # Hash the .sigmf-data while it streams, so a multi-GB capture is
-        # hashed in the same single pass it is uploaded.
+        # hashed in the same single pass it is uploaded. The source bytes are
+        # stored unconverted (ADR-024), so this is also the stored digest.
         hasher = hashlib.sha512()
 
         def _hashed_chunks() -> Iterator[bytes]:
-            for chunk in _iter_cf32_files(file_paths, datatype, chunk_samples):
-                hasher.update(chunk)
-                yield chunk
+            for path in file_paths:
+                for chunk in _iter_file_chunks(path):
+                    hasher.update(chunk)
+                    yield chunk
 
         data_bytes_uploaded = client.upload_multipart(
             data_key,

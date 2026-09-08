@@ -417,9 +417,14 @@ def test_ingest_sigmf_pair_preserves_existing_meta(
     assert info.metadata["sample-count"] == "128"
 
 
-def test_ingest_sigmf_pair_normalizes_ci16_le_and_updates_metadata(
+def test_ingest_sigmf_pair_stores_ci16_le_byte_for_byte(
     storage_client: StorageClient, tmp_path
 ) -> None:
+    """ci16_le is archived unconverted (ADR-024) and still reads back decoded.
+
+    Converting to cf32_le would double the object size while adding no
+    information, so the stored bytes must be bit-identical to the source file.
+    """
     raw = np.array([32767, -32768, 0, 16384], dtype="<i2")
     data_path = tmp_path / "capture.sigmf-data"
     meta_path = tmp_path / "capture.sigmf-meta"
@@ -435,14 +440,82 @@ def test_ingest_sigmf_pair_normalizes_ci16_le_and_updates_metadata(
 
     result = ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
 
+    stored_data = storage_client.download_bytes(result.data_key)
+    assert stored_data == raw.tobytes()  # not widened to cf32_le
+    assert len(stored_data) == len(raw.tobytes())
+
     content = CaptureReader(storage_client).read(result.data_key)
-    assert content.sigmf_meta["global"]["core:datatype"] == "cf32_le"
+    assert content.sigmf_meta["global"]["core:datatype"] == "ci16_le"
+    # The reader still hands callers normalised complex64.
     np.testing.assert_allclose(
         content.samples,
         np.array([32767 / 32768 - 1j, 0 + 0.5j], dtype=np.complex64),
     )
-    stored_data = storage_client.download_bytes(result.data_key)
+    # The declared hash describes the stored (== source) bytes.
     assert hashlib.sha512(stored_data).hexdigest() == content.sigmf_meta["global"]["core:sha512"]
+    assert (
+        content.sigmf_meta["global"]["core:sha512"]
+        == hashlib.sha512(data_path.read_bytes()).hexdigest()
+    )
+
+
+def test_ingest_files_stores_raw_cu8_unconverted(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    """Raw-IQ ingest also archives source bytes and declares their datatype."""
+    raw = np.array([255, 0, 128, 191], dtype="u1")  # 2 complex cu8 samples
+    path = tmp_path / "dump.iq"
+    path.write_bytes(raw.tobytes())
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="iridium",
+        sample_rate=2_000_000,
+        center_freq=1_626_000_000,
+        datatype="cu8",
+        storage_client=storage_client,
+    )
+
+    stored = storage_client.download_bytes(result.data_key)
+    assert stored == raw.tobytes()  # 4 bytes in, 4 bytes stored (not 16)
+    assert result.sample_count == 2
+
+    content = CaptureReader(storage_client).read(result.data_key)
+    assert content.sigmf_meta["global"]["core:datatype"] == "cu8"
+    assert content.sigmf_meta["global"]["core:sha512"] == hashlib.sha512(
+        raw.tobytes()
+    ).hexdigest()
+    np.testing.assert_allclose(
+        content.samples,
+        np.array(
+            [(255 - 127.5) / 127.5 + ((0 - 127.5) / 127.5) * 1j,
+             (128 - 127.5) / 127.5 + ((191 - 127.5) / 127.5) * 1j],
+            dtype=np.complex64,
+        ),
+        rtol=1e-6,
+    )
+
+
+def test_ingest_files_maps_cs32_to_its_sigmf_datatype_name(
+    storage_client: StorageClient, tmp_path
+) -> None:
+    """The CLI's source names are translated to real SigMF datatype strings."""
+    raw = np.array([1 << 30, -(1 << 30)], dtype="<i4")  # 1 complex cs32 sample
+    path = tmp_path / "dump.iq"
+    path.write_bytes(raw.tobytes())
+
+    result = ingest_file(
+        file_path=str(path),
+        signal_type="iridium",
+        sample_rate=2_000_000,
+        center_freq=1_626_000_000,
+        datatype="cs32",
+        storage_client=storage_client,
+    )
+
+    content = CaptureReader(storage_client).read(result.data_key)
+    assert content.sigmf_meta["global"]["core:datatype"] == "ci32_le"
+    assert storage_client.download_bytes(result.data_key) == raw.tobytes()
 
 
 def test_ingest_sigmf_pair_can_add_missing_sha512(
@@ -467,6 +540,47 @@ def test_ingest_sigmf_pair_can_add_missing_sha512(
         samples.tobytes()
     ).hexdigest()
     assert meta_path.read_bytes() == original_meta_bytes
+
+
+def test_ingest_sigmf_pair_saves_annotations_to_the_local_meta(
+    storage_client: StorageClient, tmp_path, monkeypatch
+) -> None:
+    """Annotating must persist locally, not only into the uploaded object.
+
+    Demodulating a multi-GB recording takes many minutes; keeping that result
+    only in MinIO would force a re-run to inspect or re-upload the pair.
+    """
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(np.ones(128, dtype=np.complex64).tobytes())
+    meta = _canonical_meta(signal_type="iridium", center_freq=1_622_000_000, annotations=[])
+    meta["global"]["core:sha512"] = "<missing:core:sha512>"
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    annotations = [{"core:sample_start": 7, "core:label": "Iridium frame"}]
+
+    def fake_annotate(**kwargs) -> bytes:
+        annotated = json.loads(kwargs["meta_bytes"])
+        annotated["annotations"] = annotations
+        return json.dumps(annotated, indent=2, sort_keys=True).encode("utf-8")
+
+    monkeypatch.setattr(ingest_module, "_apply_iridium_annotations", fake_annotate)
+
+    result = ingest_sigmf_pair(
+        file_path=str(data_path),
+        iridium_annotate=True,
+        storage_client=storage_client,
+    )
+
+    local = json.loads(meta_path.read_text())
+    uploaded = json.loads(storage_client.download_bytes(result.meta_key))
+    assert local["annotations"] == annotations
+    assert local["annotations"] == uploaded["annotations"]
+    # The locally saved copy also carries the computed hash, so a rerun of
+    # plain ingest on this pair validates without recomputing anything.
+    assert local["global"]["core:sha512"] == hashlib.sha512(
+        data_path.read_bytes()
+    ).hexdigest()
 
 
 def test_ingest_sigmf_pair_requires_operator_supplied_datetime(
@@ -563,14 +677,14 @@ def test_ingest_sigmf_pair_resolves_placeholder_sha512_before_annotating(
     ]
 
 
-def test_ingest_sigmf_pair_skips_hashing_when_meta_is_incomplete(
-    storage_client: StorageClient, tmp_path, monkeypatch
+def test_ingest_sigmf_pair_writes_resolved_sha512_when_meta_is_incomplete(
+    storage_client: StorageClient, tmp_path
 ) -> None:
-    """An incomplete pair must fail before reading the (possibly huge) data file.
+    """Stopping for a missing field still leaves the SHA filled in locally.
 
-    Hashing a multi-GB capture takes minutes, so the cheap metadata checks run
-    first: the operator learns a field is missing immediately, not after a
-    full read that was going to be discarded anyway.
+    The operator has to edit this file and run again, so it is handed back as
+    complete as ingest can make it: the hash is the one field AeroLake can work
+    out on its own.
     """
     samples = np.arange(128, dtype=np.complex64)
     data_path = tmp_path / "capture.sigmf-data"
@@ -584,6 +698,27 @@ def test_ingest_sigmf_pair_skips_hashing_when_meta_is_incomplete(
     )
     meta_path.write_text(json.dumps(meta, indent=2))
 
+    with pytest.raises(ValueError, match="annotations"):
+        ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
+
+    rewritten = json.loads(meta_path.read_text())
+    assert rewritten["global"]["core:sha512"] == hashlib.sha512(samples.tobytes()).hexdigest()
+
+
+def test_ingest_sigmf_pair_rejects_bad_datatype_without_reading_the_data(
+    storage_client: StorageClient, tmp_path, monkeypatch
+) -> None:
+    """The cheap checks still run before the expensive read.
+
+    Hashing a multi-GB capture takes minutes, so a pair that can be rejected on
+    metadata alone — an unsupported datatype here — must fail without touching
+    the data file. Only a pair that is otherwise valid is worth hashing.
+    """
+    data_path = tmp_path / "capture.sigmf-data"
+    meta_path = tmp_path / "capture.sigmf-meta"
+    data_path.write_bytes(np.ones(128, dtype=np.complex64).tobytes())
+    meta_path.write_text(json.dumps(_canonical_meta(datatype="rf32_le")))
+
     reads: list[str] = []
     real_chunks = ingest_module._iter_file_chunks
 
@@ -593,10 +728,10 @@ def test_ingest_sigmf_pair_skips_hashing_when_meta_is_incomplete(
 
     monkeypatch.setattr(ingest_module, "_iter_file_chunks", spy_chunks)
 
-    with pytest.raises(ValueError, match="annotations"):
+    with pytest.raises(ValueError, match="Unsupported SigMF datatype"):
         ingest_sigmf_pair(file_path=str(data_path), storage_client=storage_client)
 
-    assert reads == [], "data file must not be hashed before metadata is complete"
+    assert reads == [], "data file must not be read to reject a bad datatype"
 
 
 def test_ingest_sigmf_pair_rejects_empty_annotations_with_annotation_hint(
@@ -735,6 +870,8 @@ def test_ingest_cli_happy_path(storage_client: StorageClient, tmp_path, capsys) 
         metadata["captures"][0]["core:datetime"]
         == "<missing:captures[0].core:datetime>"
     )
+    # The hash, by contrast, is computed: the operator cannot supply it by hand.
+    assert global_meta["core:sha512"] == hashlib.sha512(path.read_bytes()).hexdigest()
 
 
 def test_ingest_cli_generates_iqengine_artifacts(
