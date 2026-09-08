@@ -26,7 +26,7 @@
   },
   "captures": [
     {
-      "core:datetime": "INGEST_TIME_IN_UTC",
+      "core:datetime": "REPLACE_WITH_RECORDING_START_TIME_IN_UTC",
       "core:frequency": "REPLACE_WITH_CAPTURE_CENTER_FREQUENCY in Hz",
       "core:sample_start": 0
     }
