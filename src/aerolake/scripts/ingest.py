@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -48,7 +49,12 @@ from rich.table import Table
 
 from aerolake.common.logging import configure_logging
 from aerolake.common.storage import StorageClient, StorageError
-from aerolake.producer.ingest import IngestResult, ingest_files, ingest_sigmf_pair
+from aerolake.producer.ingest import (
+    IngestResult,
+    _iter_file_chunks,
+    ingest_files,
+    ingest_sigmf_pair,
+)
 
 
 def _meta_path(data_path: str) -> Path:
@@ -73,6 +79,13 @@ def _write_metadata_template(
     source_bytes_per_sample = {"cf32": 8, "cu8": 2, "cs16": 4, "ci16_le": 4, "cs32": 8}[datatype]
     sample_count = os.path.getsize(data_path) // source_bytes_per_sample
     duration_s = sample_count / sample_rate if sample_rate > 0 else 0.0
+    # Fill in the hash now rather than leaving a placeholder: it is the one
+    # field the operator cannot reasonably supply by hand, and the template
+    # exists to be edited and re-ingested.
+    hasher = hashlib.sha512()
+    for chunk in _iter_file_chunks(data_path):
+        hasher.update(chunk)
+    data_sha512 = hasher.hexdigest()
     metadata = {
         "global": {
             "core:author": "AeroLake",
@@ -90,7 +103,7 @@ def _write_metadata_template(
             "core:extensions": [
                 {"name": "aerolake", "version": "1.0.0", "optional": True}
             ],
-            "core:sha512": "<missing:core:sha512>",
+            "core:sha512": data_sha512,
             "aerolake:duration_s": duration_s,
             "aerolake:mobile": False,
             "aerolake:operator": "<missing:aerolake:operator>",
@@ -166,7 +179,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ensure-sha512",
         action="store_true",
         help="Compatibility option; existing-pair ingest always checks and adds "
-        "global.core:sha512. The local .sigmf-meta file is not modified.",
+        "global.core:sha512.",
     )
     parser.add_argument(
         "--iridium-annotate",
@@ -242,8 +255,8 @@ def main(argv: list[str] | None = None, *, storage_client: StorageClient | None 
             f"[bold yellow]! No SigMF meta file found. Created an editable template:[/] {meta_path}"
         )
         console.print(
-            "Fill every <missing:...> value with an appropriate value, then rerun "
-            "ingest without metadata flags. Nothing was uploaded."
+            "core:sha512 was computed for you. Fill every <missing:...> value with an "
+            "appropriate value, then rerun ingest without metadata flags. Nothing was uploaded."
         )
         return 2
     if not generated_meta_mode and len(files) != 1:
