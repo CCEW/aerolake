@@ -224,18 +224,20 @@ aerolake/
 ### 4.11 `producer/ingest.py` — bring in an existing recording
 - **`ingest_files(*, file_paths, signal_type, sample_rate, center_freq,
   datatype="cf32", …)`** → `IngestResult`. **Streamed** ingestion: reads the
-  file(s) in chunks, converts `cu8`/`cs16`/`ci16_le`/`cs32` → **normalised
-  `cf32_le`**, computes the SHA-512 on the stored bytes, pushes via
-  `upload_multipart` (bounded RAM whatever the size), then writes the
-  `.sigmf-meta`. Multi-file = **one** continuous capture (RFSoC
-  `RX0_pkt_*.bin` case, concatenated in numeric order).
+  file(s) in chunks and stores them **unconverted** (ADR-024), declaring the
+  source datatype as `core:datatype` (`cs16` → `ci16_le`, `cs32` → `ci32_le`,
+  …), computes the SHA-512 on those bytes, pushes via `upload_multipart`
+  (bounded RAM whatever the size), then writes the `.sigmf-meta`. Multi-file =
+  **one** continuous capture (RFSoC `RX0_pkt_*.bin` case, concatenated in
+  numeric order).
 - `ingest_file(…)` — single-file wrapper.
 - **`ingest_sigmf_pair(file_path, …)`** — existing-pair path. Before upload it
   validates the SigMF metadata, checks byte alignment, verifies any existing
-  source SHA-512, adds a missing hash, converts `ci16_le` data to normalized
-  `cf32_le`, canonicalizes `cf32` metadata to `cf32_le`, and records the hash
-  of the stored bytes. Accepted existing-pair datatypes are `cf32`, `cf32_le`,
-  and `ci16_le`; source files are never modified.
+  source SHA-512, and adds a missing hash. The `.sigmf-data` is uploaded
+  byte-for-byte in its declared datatype, so the stored object is bit-identical
+  to the local file. The `.sigmf-data` is never modified; the local
+  `.sigmf-meta` is updated to keep the computed `core:sha512` and any
+  `--iridium-annotate` annotations.
 - This is **the GNU Radio → lakehouse entry bridge** (ADR-019).
 
 ### 4.12 `producer/preview.py` — the visual preview

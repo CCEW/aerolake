@@ -64,24 +64,26 @@ uv run aerolake-ingest capture.sigmf-data
 Expected flow:
 
 1. AeroLake locates `capture.sigmf-data` and `capture.sigmf-meta` next to each other.
-2. It validates that the JSON is readable SigMF metadata and uploads it.
+2. It parses the JSON and checks that the canonical SigMF/AeroLake fields are present.
 3. It checks that the `.sigmf-data` bytes are aligned to the declared datatype.
-4. It verifies `global.core:sha512` if one already exists.
-5. If the hash is missing, it computes one and prepares to upload the final meta.
-6. If the declared datatype is `ci16_le`, it normalizes to stored `cf32_le` before upload.
-7. It validates the final metadata and uploads metadata first, then the IQ data.
+4. It hashes the `.sigmf-data`, verifying `global.core:sha512` if one already exists and computing it when missing.
+5. It validates the final metadata and uploads metadata first, then the IQ data.
 
-Typical output looks like:
+The capture is stored **byte-for-byte in its recorded datatype**: nothing is
+converted, so the object in the bucket is bit-identical to the file on disk.
+
+Because steps 2 and 3 are cheap and step 4 reads the whole file, an incomplete
+pair stops right away rather than after a long read.
+
+While it runs, the spinner names the current stage, so a long capture shows
+where the time is going:
 
 ```text
-[ingest] found SigMF pair: capture.sigmf-data, capture.sigmf-meta, uploading...
-[ingest] validating metadata schema
-[ingest] datatype ok: ci16_le -> normalized cf32_le
-[ingest] hash missing; computing core:sha512
-[ingest] metadata valid
-[ingest] upload metadata object
-[ingest] upload data object
-[ingest] ingest complete
+Checking metadata...
+Hashing capture...
+Annotating (iridium-toolkit)...     (only with --iridium-annotate)
+Uploading...
+Generating IQEngine artifacts...    (only with --iqengine)
 ```
 
 #### B. Ingest when the `.sigmf-meta` file is missing
@@ -99,21 +101,14 @@ uv run aerolake-ingest capture.sigmf-data \
 Expected flow:
 
 1. AeroLake notices there is no local `.sigmf-meta` sidecar.
-2. It creates a same-basename `.sigmf-meta` file containing the CLI values, derived defaults, and `<missing:...>` placeholders only for values the CLI cannot know.
-3. It stops before upload so you can enter the missing operator, location, and other capture-specific values.
+2. It creates a same-basename `.sigmf-meta` file containing the CLI values, derived defaults, the computed `core:sha512`, and `<missing:...>` placeholders only for values the CLI cannot know.
+3. It stops before upload so you can enter the missing operator, location, recording time (`captures[0].core:datetime`), and other capture-specific values.
 4. You complete and save the metadata using the SigMF examples and schema reference.
 5. You rerun `uv run aerolake-ingest capture.sigmf-data` without metadata flags.
-6. AeroLake validates the completed pair, normalizes the stored bytes to `cf32_le`, computes `core:sha512`, and uploads metadata first, then data.
+6. AeroLake validates the completed pair and uploads metadata first, then data. The IQ data is stored in its recorded datatype, unconverted.
 
-Typical output looks like:
-
-```text
-[ingest] source file detected: capture.sigmf-data
-[ingest] no local sigmf-meta found; creating editable metadata template
-[ingest] created capture.sigmf-meta
-[ingest] fill <missing:...> values and rerun without metadata flags
-[ingest] nothing uploaded
-```
+The hash is computed for you at step 2 — it is the one field an operator cannot
+work out by hand — so only the `<missing:...>` values need editing.
 
 > Important: in this mode, placeholders such as `REPLACE_WITH_*`, `TODO`, or `<missing:...>` should not be left in the uploaded metadata. The values must be filled with real SigMF-compatible data. Use `examples/capture.sigmf-meta.example.json` and `examples/iqengine-metadata-schema-example.json` as the reference for the expected field layout and value shapes.
 
@@ -158,9 +153,10 @@ cf32, cu8, cs16, ci16_le, cs32
 
 The generated-data checklist is: confirm the source datatype is supported,
 confirm every file is aligned to a complete IQ sample, complete all metadata
-placeholders with real SigMF-compatible values, normalize the source to stored
-`cf32_le`, compute the hash over the stored bytes, validate the metadata, then
-upload metadata followed by data.
+placeholders with real SigMF-compatible values, declare the source datatype as
+`core:datatype`, compute the hash over the source bytes, validate the metadata,
+then upload metadata followed by data. The samples themselves are uploaded
+unchanged.
 
 > **Important**: do not leave `REPLACE_WITH_*`, `TODO`, or `<missing:...>` values
 > in metadata that will be uploaded. Use `examples/capture.sigmf-meta.example.json`
@@ -205,18 +201,29 @@ uv run aerolake-ingest capture.sigmf-data --iridium-annotate
 For another signal type, add an appropriate SigMF annotation object manually,
 then rerun `uv run aerolake-ingest capture.sigmf-data`. Do not add metadata
 flags when rerunning an existing pair.
-After the file is completed, existing `ci16_le` data is
-converted to normalized `cf32_le` before upload, and the metadata/hash describe
-the converted bytes. Legacy `cf32` metadata is canonicalized to `cf32_le`.
+After the file is completed, the data is uploaded in the datatype the metadata
+declares — `ci16_le` stays `ci16_le` — and the hash describes those same bytes.
 The `--ensure-sha512` option remains accepted for compatibility but is no
 longer required.
 
-The existing-pair checklist is: locate both files, parse and validate SigMF,
-check datatype support and byte alignment, verify any existing source hash,
-normalize `ci16_le` when declared, canonicalize `cf32` to `cf32_le`, compute the
-stored-byte hash, validate the final metadata, then upload metadata followed by
-data. The source files are never modified. The currently accepted pair
-datatypes are `cf32`, `cf32_le`, and `ci16_le`.
+The existing-pair checklist is: locate both files, parse the SigMF JSON, check
+datatype support and byte alignment, check the canonical fields, then hash the
+`.sigmf-data`, verify any existing source hash, validate the final metadata,
+and upload metadata followed by data.
+
+The cheap checks deliberately run before the hash: a pair that can be rejected
+on metadata alone (unsupported datatype, misaligned bytes) fails immediately
+instead of after a full read of a multi-gigabyte file.
+
+The `.sigmf-data` file is never modified. The local `.sigmf-meta` **is**
+updated, so it keeps whatever ingest worked out:
+
+- when canonical fields are missing, the defaults and `<missing:...>`
+  placeholders described above, plus the computed `core:sha512`;
+- when `--iridium-annotate` runs, the generated `annotations` array.
+
+That way the hash never has to be pasted in by hand, and a long annotation run
+is not lost when the only copy would otherwise be the uploaded object.
 
 The signal type is required for existing-pair ingest so the capture can be
 labeled and written under the correct bucket prefix. Add the AeroLake signal
@@ -394,7 +401,7 @@ uv run aerolake-collection \
 ```
 
 Creates a SigMF collection from complete `.sigmf-data` + `.sigmf-meta` pairs
-under a prefix.
+under a prefix. Must be in a single bucket in MinIO via Aerolake Ingest or Aerolake Capture. The collection is a JSON file with the same name as the prefix, stored in the same bucket. It contains a list of all captures under that prefix, with their metadata and object keys.
 
 ## 7. Playback And Streaming
 

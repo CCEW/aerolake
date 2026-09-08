@@ -139,7 +139,10 @@ uv run aerolake-ingest capture.sigmf-data --iridium-annotate
 ```
 
 This command uses the existing `capture.sigmf-meta`, adds the detected Iridium
-annotations, validates the completed pair, and then uploads it. If the capture
+annotations, validates the completed pair, and then uploads it. The annotation
+step *replaces* the `annotations` array rather than appending to it, so running
+it again on an already-annotated file regenerates the list instead of
+duplicating entries. If the capture
 is not Iridium, add an appropriate SigMF annotation object manually before
 rerunning the ingest command. Do not use `--signal-type`, `--sample-rate`, or
 `--center-freq` in existing-pair mode.
@@ -181,7 +184,7 @@ capture.sigmf-data
 capture.sigmf-meta
 ```
 
-The `.sigmf-meta` file is the machine-readable identity card of the capture. The `.sigmf-data` file contains the raw IQ samples. The CLI validates and normalizes those files before upload, and it always keeps the integrity of the stored data by checking the hash.
+The `.sigmf-meta` file is the machine-readable identity card of the capture. The `.sigmf-data` file contains the raw IQ samples. The CLI validates the pair before upload and always keeps the integrity of the stored data by checking the hash. The IQ samples themselves are archived unchanged, in the datatype they were recorded in.
 
 ---
 

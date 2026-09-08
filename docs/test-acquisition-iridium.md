@@ -91,13 +91,15 @@ uv run --group gui aerolake-gui
 ```
 
 > The `--datatype` value describes the RFSoC file's source format. AeroLake
-> validates sample alignment, streams the file, and stores normalized
-> `cf32_le`; integer inputs such as `ci16_le` are converted during ingest.
+> validates sample alignment, streams the file, and stores it **unconverted**
+> in that datatype; integer inputs such as `ci16_le` stay `ci16_le` in the
+> bucket, and the reader decodes them on the way out.
 
 If the RFSoC software already writes a SigMF pair, ingest it without metadata
-flags. AeroLake validates the pair, verifies or adds `core:sha512`, converts a
-declared `ci16_le` pair to `cf32_le`, and uploads the metadata before the data.
-The local pair is not modified.
+flags. AeroLake validates the pair, verifies or adds `core:sha512`, and uploads
+the metadata before the data, storing the samples byte-for-byte as recorded.
+The `.sigmf-data` is not modified; the local `.sigmf-meta` is updated with the
+computed hash and, with `--iridium-annotate`, the generated annotations.
 
 ## 7. Questions to clarify before the test
 
