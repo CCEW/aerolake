@@ -75,8 +75,10 @@ The pipeline is **Producer → MinIO → Consumer**. Three packages under `src/a
   encodes them to SigMF bytes (`encode`), `orchestrator.py` (`capture_and_upload`) ties
   generate → encode → upload together. `ingest.py` (`ingest_file`/`ingest_files`,
   `aerolake-ingest`) is the **real-data** entry point: take an existing IQ file **or a directory
-  of packet files** (RFSoC `RX0_pkt_*.bin`, concatenated in numeric order; `cf32/cu8/cs16/cs32`
-  → normalised cf32), write the `.sigmf-meta`, and stream into MinIO via `upload_multipart`.
+  of packet files** (RFSoC `RX0_pkt_*.bin`, concatenated in numeric order), write the
+  `.sigmf-meta`, and stream into MinIO via `upload_multipart`. Samples are stored
+  **byte-for-byte in their recorded datatype** (ADR-024) — `cf32/cu8/cs16/cs32` are
+  declared, not converted; `CaptureReader` decodes them to complex64 on read.
   `soapy_source.py` is the real-SDR acquisition layer (SoapySDR): `SdrRecorder` (ADR-015) is an
   **OOP wrapper** owning the device lifecycle (open/configure/start/read/stop/close, context
   manager), with an **injectable `device_opener`** so the whole recorder is testable without
@@ -119,8 +121,11 @@ structlog logs go to stderr, keeping stdout clean for results (`--json`, tables)
 `gnuradio/` holds `record.grc` / `playback.grc` —
 **separate from the uv project**: they need a system GNU Radio (`sudo apt install gnuradio`, 3.10+)
 and run with the *system* Python that ships its bindings, not `.venv`. The bridge to the rest of
-AeroLake is the **`.sigmf-data` file itself**: it is raw `cf32_le`, which GNU Radio's File
-Source/Sink read/write natively as *complex* — no SigMF block needed. Validate a `.grc` headlessly
+AeroLake is the **`.sigmf-data` file itself**. A `cf32_le` capture is raw complex float32, which
+GNU Radio's File Source/Sink read/write natively as *complex* — no SigMF block needed. Since
+ADR-024 captures are stored in their **recorded** datatype, so a `ci16_le`/`cu8` capture needs the
+File Source set to that type plus an `IShort→Complex`-style converter: always check the
+`.sigmf-meta`'s `core:datatype` before wiring a flowgraph. Validate a `.grc` headlessly
 with `grcc -o /tmp gnuradio/playback.grc`; the generated `.py` is gitignored.
 
 > **Note:** the TX flowgraph (`transmit_sdr.grc`), the direct-SDR capture flowgraph
@@ -205,6 +210,7 @@ the code is shaped the way it is — consult them before reversing a design choi
 - ADR-016 — SigMF-native geolocation from gpsd (avoid the "GPSD trap": live fix → validated `core:geolocation`, None when no fix; injectable gpsd reader)
 - ADR-018 — **remove the quality/validation layer** (user opts in to saving each acquisition; supersedes ADR-004/005)
 - ADR-019 — **record/playback division of labour**: GNU Radio owns the RF edges (heavy record + RF re-emission), AeroLake owns the lakehouse (store/catalog/serve + software & visual playback); the `.sigmf-data` file is the contract (refines ADR-007/012)
+- ADR-024 — **store captures in their recorded datatype**: ingest never converts sample data (a `ci16_le` capture stays `ci16_le`, halving storage and keeping the archive bit-identical to the recorder's file); `CaptureReader` decodes any stored datatype to normalised complex64 on read
 - ADR-020 — **MinIO community EOL**: stay on pinned MinIO short-term; **SeaweedFS** is the validated fallback (the integration suite passed against it unchanged); any store must support tagging + Range + multipart + x-amz-meta (Garage excluded: no tagging)
 
 ## Testing notes

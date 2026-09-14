@@ -18,7 +18,11 @@ AeroLake records RF signals and stores them as SigMF captures:
 - one raw IQ file: `capture.sigmf-data`
 - one metadata file: `capture.sigmf-meta`
 
-Preview sidecars are not created by AeroLake ingest itself. If IQEngine is configured, it creates preview/thumbnail assets after a capture is refreshed and opened in the IQEngine UI. AeroLake's responsibility is the SigMF pair and the validated metadata.
+The SigMF pair is authoritative. Add `--iqengine` to `aerolake-ingest` when the
+capture should also include IQEngine sidecars: `capture.jpg`,
+`capture.preview.jpg`, and `capture.minimap`. They are derived preview/overview
+assets stored beside the pair; `--iqengine redo` regenerates them before upload.
+The separate `-preview.png` image is a best-effort Streamlit capture-GUI asset.
 
 The metadata file is the key to understanding what a capture is. Use [../examples/capture.sigmf-meta.example.json](../examples/capture.sigmf-meta.example.json) as the canonical layout reference and [../examples/iqengine-metadata-schema-example.json](../examples/iqengine-metadata-schema-example.json) as the field-level reference for the kinds of values that can legitimately appear after ingestion and sync. Use [../examples/short_24lines.ingest.sigmf-meta.example.json](../examples/short_24lines.ingest.sigmf-meta.example.json) as a real, populated example of a short capture.
 

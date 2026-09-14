@@ -17,9 +17,8 @@ open **SigMF** standard, stored in the shared **MinIO** storage (FAST server),
 described by **searchable metadata and tags**, with an automatically generated
 **spectrum preview**.
 
-One stored capture is normally a SigMF pair plus the visualization assets that
-IQEngine or the capture UI can generate after the recording is opened and
-refreshed:
+One stored capture is normally a SigMF pair. When requested at ingest with
+`--iqengine`, AeroLake also creates the IQEngine visualization sidecars:
 
 ```
 {signal_type}/{date}/{session}/capture.sigmf-data    ← the signal (raw IQ samples)
@@ -29,9 +28,9 @@ refreshed:
 ```
 
 The **signal itself** is preserved, sample by sample (sha512 integrity): what
-you replay is **exactly** what was received. The GUI-created
-`capture-preview.png` is not the core lakehouse artifact and is effectively a
-separate preview image used in the browser UI.
+you replay is **exactly** what was received. The IQEngine sidecars are derived
+conveniences. The GUI-created `capture-preview.png` is a separate best-effort
+preview image, not a core lakehouse artifact.
 
 ## 2. The addresses to know
 
@@ -85,9 +84,10 @@ the hardware, captures, then shows: sample count, size, duration, and the
 
 **With nothing installed**: open the **MinIO console**
 (https://minio.fast.etsmtl.ca/browser) → the captures bucket → browse by signal
-type then by date → open the capture and let IQEngine refresh the associated
-preview assets. The standard capture images are usually `capture.jpg` and
-`capture.minimap` rather than the older GUI-only preview image.
+type then by date. For IQEngine browsing, sync the datasource after an upload,
+then open the capture. The standard IQEngine assets are `capture.jpg`,
+`capture.preview.jpg`, and `capture.minimap`; create them during ingest with
+`--iqengine` or with `aerolake-iqengine-artifacts` for an existing pair.
 
 **In the AeroLake interface**: **▶ Playback** tab → pick a capture from the list
 → metadata + preview are shown → with the *Start / Window* sliders, view the
@@ -119,7 +119,8 @@ Every feature also exists as a CLI (from the repository):
 ```bash
 uv run aerolake-healthcheck                       # config + MinIO responding?
 uv run aerolake-capture --config my_capture.toml  # file-driven capture
-uv run aerolake-list --signal-type gnss_l1        # catalogue: list/filter by tag
+uv run aerolake-list --catalog minio --signal-type gnss_l1  # tag catalog
+uv run aerolake-list --catalog iqengine --signal-type gnss_l1 --json # IQEngine catalog
 uv run aerolake-ingest file.bin --signal-type X --sample-rate 2e6 --center-freq 1575.42e6
                                                   # ingest an already-recorded IQ file
 uv run aerolake-play --prefix gnss_l1/ --start 200 --duration 10   # replay a window, paced

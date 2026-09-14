@@ -27,11 +27,12 @@ AeroLake must use the IQEngine service name and port, for example
 `http://iqengine:5000`. IQEngine documents its API at `/api_docs`,
 `/openapi.json`, and `/api/status`.
 
-The plan therefore needs to distinguish between a valid target architecture and
-capabilities that still require work in the IQEngine repository. Existing
-unversioned endpoints, authentication, synchronization reporting, and deletion
-handling must not be treated as a stable production contract without agreement
-between the two repositories.
+The implementation now includes a versioned integration surface for datasource
+lookup, synchronization, synchronization status, and catalogue query. Its sync
+job reports completion, duration, object counts, and errors, and reconciles
+changed and absent objects. The metadata-retrieval route remains unversioned;
+deployment authentication, service identity, and API compatibility still need
+an agreed production contract.
 
 ## Proposed architecture
 
@@ -64,12 +65,13 @@ bucket, region, credentials, and optional prefix. IQEngine can then synchronize
 objects uploaded directly by AeroLake; IQEngine does not need to own or upload
 the files itself.
 
-The supported integration operations are datasource lookup, datasource sync,
-read-only search, and metadata retrieval. The sync endpoint currently queues a
-background job and returns before completion without a job ID or status. Sync
-status reporting therefore remains an IQEngine-side contract requirement. IQ
-data retrieval is not routed through IQEngine for AeroLake's POC; AeroLake
-continues to read the MinIO object directly using its existing reader paths.
+The supported integration operations are datasource lookup, asynchronous
+datasource sync, sync-status lookup, read-only search, and metadata retrieval.
+`POST /api/v1/integration/datasources/{account}/{container}/sync` returns a
+job document with a `job_id`; `GET /api/v1/integration/sync/{job_id}` reports
+`queued`, `running`, `completed`, or `failed`. IQ data retrieval is not routed
+through IQEngine for AeroLake's POC; AeroLake continues to read the MinIO object
+directly using its existing reader paths.
 
 ## Comparison of catalog options
 
@@ -112,10 +114,11 @@ using the returned MinIO keys for retrieval. It must also test invalid metadata,
 missing data/meta pairs, changed metadata, deleted objects, repeated syncs, and
 IQEngine unavailability.
 
-The decision is conditional on the shared contract in ADR-022 and the
-synchronization behavior in ADR-023 being agreed and implemented. Until then,
-AeroLake's existing MinIO tag-based catalog remains available as a degraded
-fallback; it is not a second authoritative database catalog.
+The local IQEngine implementation satisfies the core synchronization behavior
+in ADR-023. Production use remains conditional on the shared contract in
+ADR-022, deployed-service verification, and the unresolved items recorded in
+ADR-023. AeroLake's existing MinIO tag-based catalog remains a degraded
+fallback, not a second authoritative database catalog.
 
 ## Consequences
 
@@ -134,8 +137,9 @@ fallback; it is not a second authoritative database catalog.
   authentication service.
 - Both repositories must agree on object naming, metadata fields, response
   schemas, sync freshness, and deletion behavior.
-- IQEngine's current synchronization must be extended or wrapped to report
-  status and handle stale records safely; upsert-only behavior is insufficient.
+- The versioned sync path has status reporting and reconciliation, but scheduled
+  refresh, data-only orphan reporting, an administrative cleanup operation,
+  and fully versioned metadata retrieval are still open.
 - A catalog outage produces stale or unavailable search results, although MinIO
   access should continue.
 - Production approval still depends on service identity provisioning, TLS,

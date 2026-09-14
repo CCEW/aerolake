@@ -252,7 +252,14 @@ When a local `.sigmf-meta` file is missing, AeroLake is creating a new metadata 
 
 The schema example in `examples/iqengine-metadata-schema-example.json` shows the fields that commonly appear in a valid capture after AeroLake ingest and later IQEngine sync. It is a useful field catalogue for `global`, `captures`, and annotation conventions, and it helps distinguish values that are required, optional, or set by the catalog UI after refresh.
 
-Preview/thumbnail sidecars are not produced by AeroLake ingest. They are created by IQEngine after clicking refresh and opening the capture in the IQEngine UI. AeroLake remains responsible for the SigMF pair and metadata validation.
+`aerolake-ingest --iqengine` generates or reuses and uploads the IQEngine sidecars
+`capture.jpg`, `capture.preview.jpg`, and `capture.minimap` beside the SigMF
+pair. Use `--iqengine redo` to regenerate all local sidecars before upload, or
+`aerolake-iqengine-artifacts <base> [--upload]` to produce them separately.
+They are derived convenience artifacts: AeroLake's authoritative outputs remain
+the SigMF pair and its validated metadata. IQEngine may refresh its own catalog
+or presentation after datasource synchronization, but it does not replace this
+upload step.
 
 ### 4.5 Iridium Annotation During Generated-Meta Ingest
 

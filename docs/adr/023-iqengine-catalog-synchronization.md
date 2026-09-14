@@ -1,6 +1,6 @@
 # ADR-023 — IQEngine catalog synchronization and reconciliation
 
-- **Status:** Accepted for AeroLake orchestration; IQEngine sync/reconciliation contract required
+- **Status:** Accepted; local IQEngine sync/reconciliation implementation complete, deployment contract still required
 - **Date:** 2026-08-26
 - **Author:** Camila Nino Francia
 - **Relates to:** ADR-003 (metadata and tags), ADR-021 (IQEngine catalog integration), ADR-022 (ownership boundary)
@@ -9,16 +9,16 @@
 ## Context
 
 AeroLake publishes recordings to MinIO while IQEngine maintains a derived
-MongoDB catalog. IQEngine's current synchronization can discover and upsert
-matching SigMF pairs, but the integration also needs freshness reporting,
-repeatable operation, changed-object handling, and safe treatment of deleted or
-incomplete recordings.
+MongoDB catalog. The local implementation inventories both SigMF object types,
+indexes valid complete pairs, detects changed metadata/data fingerprints, and
+reconciles catalog rows that are absent from storage. It exposes a versioned
+asynchronous job API with completion state, duration, object counts, and
+structured errors.
 
-The current IQEngine sync endpoint queues a background synchronization and
-returns without a job ID or completion status. It upserts discovered metadata
-but does not remove catalog entries for objects deleted from MinIO. These are
-known gaps to close in IQEngine before the synchronization policy below can be
-considered production-ready.
+This documents repository behavior, not a claim that an IQEngine deployment has
+been verified against the AeroLake MinIO service. Service identity, deployed
+credentials, API compatibility, timeout policy, and operational monitoring
+remain deployment concerns.
 
 ## Decision
 
@@ -35,18 +35,25 @@ initially proposed as three hours:
 2. If the catalog is stale, the current result is returned with stale status and
    one asynchronous sync is triggered.
 3. A single-flight or distributed lock prevents duplicate concurrent syncs.
-4. A scheduled fallback runs every few hours even when there is no user traffic.
+4. No scheduled fallback is required for the current low-concurrency research
+   catalogue. A user-triggered refresh is sufficient when current results are
+   needed; a stale result must remain visibly marked until that refresh completes.
 5. Sync start, completion, failure, duration, and object counts are recorded.
 
 The exact interval is configuration, not an API contract. A sync must be safe to
-repeat and safe when overlapping requests arrive.
+repeat and safe when overlapping requests arrive. The current IQEngine backend
+does not implement a scheduler; this is an AeroLake/deployment responsibility
+if scheduled reconciliation is required. The implemented integration is
+on-demand and reports freshness as `current`, `stale`, `sync in progress`,
+`sync failed`, or `unavailable`.
 
 ### Reconciliation and deletion
 
-The synchronization process must compare the expected MinIO recording set with
-the catalog. A recording is active only when both matching `.sigmf-meta` and
-`.sigmf-data` objects exist. Incomplete pairs are reported and are not normally
-searchable.
+The synchronization process compares the discovered object set with the
+catalog. A recording is active only when both matching `.sigmf-meta` and
+`.sigmf-data` objects exist. A metadata-only pair is reported as `missing_data`
+and is not searchable. A data-only object is not indexed, but is not currently
+reported as an incomplete pair; that reporting remains open.
 
 The preferred deletion lifecycle is:
 
@@ -54,11 +61,11 @@ The preferred deletion lifecycle is:
 active -> missing -> deleted
 ```
 
-A missing object first marks the catalog record as `missing`; after an agreed
-retention period, confirmed stale records may be marked `deleted` or removed by
-a controlled administrative operation. Reconciliation is non-destructive by
-default and must report missing catalog rows, missing MinIO objects, changed
-metadata, and incomplete pairs.
+A missing object first marks the catalog record as `missing`; after the
+configured retention period (seven days by default), it is marked `deleted`.
+The implementation is non-destructive: it does not currently expose a separate
+administrative hard-cleanup operation. It reports changed metadata, invalid
+metadata, metadata-only incomplete pairs, and missing/deleted catalog rows.
 
 For each recording, synchronization should retain or compare:
 
@@ -70,10 +77,11 @@ For each recording, synchronization should retain or compare:
 
 ### Reliability and degraded behavior
 
-IQEngine and MinIO calls must use bounded timeouts, retries with exponential
-backoff for transient failures, structured logs, and metrics. Invalid SigMF
-metadata must be rejected and reported for correction rather than silently
-indexed. Authentication failures must fail safely and visibly.
+The S3 inventory call has bounded retry with exponential backoff; terminal
+inventory failures mark the job `failed` and record error details. Equivalent
+retry/timeout behavior is not yet applied consistently to every storage path,
+and deployed authentication behavior still needs verification. Invalid SigMF
+metadata is rejected and reported rather than silently indexed.
 
 If IQEngine is unavailable, AeroLake continues to operate against MinIO where
 possible and marks catalog results stale or unavailable. It must not claim that
@@ -85,7 +93,8 @@ The cross-repository integration is acceptable for the POC when it demonstrates:
 
 - a new valid recording appears after synchronization;
 - invalid metadata is rejected and reported;
-- a missing data or metadata object is not active in the catalog;
+- a metadata-only pair is reported and not active, while data-only orphan
+  reporting remains an open requirement;
 - changed metadata is reflected after synchronization;
 - deleted objects become stale or deleted according to the agreed policy;
 - repeated and concurrent sync requests do not create unsafe duplicate work;
@@ -95,19 +104,18 @@ The cross-repository integration is acceptable for the POC when it demonstrates:
 
 ## Rationale
 
-A scheduled and explicitly observable reconciliation path is appropriate for the
-POC because it requires no MinIO event infrastructure and can recover from
-missed updates or service downtime. Lazy refresh avoids making users wait for a
-full object scan, while the scheduled fallback prevents the catalog from
-remaining stale when there are no searches.
+An explicitly observable reconciliation path is appropriate for the POC because
+it requires no MinIO event infrastructure and can recover when an operator
+triggers a refresh. Lazy refresh avoids making users wait for a full object
+scan. A scheduler remains necessary if the catalogue must refresh without user
+traffic.
 
 ## Consequences
 
 ### Positive
 
 - IQEngine remains the only catalog indexer.
-- The catalog can recover from missed events, worker downtime, and changed or
-  deleted MinIO objects.
+- The catalog reconciles changed and absent objects whenever a sync runs.
 - Users receive explicit stale-state information instead of misleading results.
 - The POC has concrete, cross-repository acceptance tests.
 

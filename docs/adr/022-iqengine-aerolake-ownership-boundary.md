@@ -1,6 +1,6 @@
 # ADR-022 — IQEngine and AeroLake ownership boundary
 
-- **Status:** Accepted for AeroLake implementation; IQEngine contract agreement required
+- **Status:** Accepted; local IQEngine integration surface implemented, deployment contract still required
 - **Date:** 2026-08-26
 - **Author:** Camila Nino Francia
 - **Relates to:** ADR-019 (record/playback division of labour), ADR-021 (IQEngine catalog integration), ADR-023 (catalog synchronization)
@@ -35,11 +35,16 @@ IQEngine's metadata write API. Metadata changes are made in MinIO by AeroLake
 and become visible in IQEngine after synchronization. IQEngine remains a
 **derived, read-only catalog from AeroLake's perspective**.
 
-AeroLake uses a dedicated service identity to call IQEngine. The integration
-API must expose only the operations required for datasource lookup, read-only
+AeroLake must use a dedicated service identity to call IQEngine in deployment.
+The integration API must expose only the operations required for datasource lookup, read-only
 search, metadata retrieval, and synchronization triggering/status. If existing
 `/api/...` routes cannot provide a compatibility guarantee, IQEngine must add a
 versioned integration wrapper.
+
+IQEngine now provides versioned datasource lookup, sync, sync-status, and
+query routes under `/api/v1/integration`. Metadata retrieval is still exposed
+through the existing unversioned datasource route, so it is not yet a fully
+versioned integration contract.
 
 ## Shared contract
 

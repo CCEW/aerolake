@@ -1,153 +1,122 @@
 # AeroLake
 
-End-to-end Python pipeline for recording, storing and extracting RF environments — a LASSENA project.
+AeroLake is an RF-recording pipeline for LASSENA. It records or ingests IQ samples, preserves them as a standard SigMF pair in S3-compatible storage, and makes them discoverable through MinIO tags or an optional IQEngine catalog.
 
-AeroLake captures radio-frequency signals, stores them in the SigMF format inside a MinIO data lakehouse (with native metadata and tags for discovery), then serves them back over a ZeroMQ Pub/Sub bus. The core goal: any member of the laboratory can find and replay any capture, thanks to standardised metadata.
+```text
+SDR / existing IQ -> AeroLake -> MinIO/S3 (authoritative SigMF files)
+                                  |                 |
+                                  |                 +-> replay / ZeroMQ / GUI
+                                  +-> IQEngine sync -> browser search and analysis
+```
 
-## Scope
+The authoritative capture is always:
 
-This repository follows the project mandate (docs/LASSENA-Project_AeroLake.pdf): an RX (receive) pipeline in four sprints.
+```text
+capture.sigmf-data    raw IQ bytes
+capture.sigmf-meta    SigMF metadata and integrity hash
+```
 
-    Producer (capture -> SigMF)  ->  MinIO (lakehouse)  ->  Consumer (extraction -> ZeroMQ)
-
-- Producer — generates/encodes IQ samples in the SigMF format and pushes them to MinIO (multipart upload).
-- Lakehouse — MinIO (S3-compatible): stores the .sigmf-data + .sigmf-meta pair, with object metadata (x-amz-meta-*) and tags for fast discovery and lifecycle.
-- Consumer — reads captures back through HTTP Range Requests and publishes them on a ZeroMQ Pub/Sub bus, ready to feed software decoders or, in a future phase, an SDR transmitter.
-
-### Out of scope (future phases, archived)
-
-The following components were built and then archived to refocus the project on the mandate. They are preserved in full on the archive/explorations-v1 branch and remain recoverable:
-
-- The former Streamlit/Plotly *visualisation* interface (ADR-006) — not to be confused with the **new capture/playback web interface**, which is part of this repository (see "Web interface" below)
-- Decoded .h5 data analysis module — Doppler/IMU/GPS (ADR-011)
-- RF transmission / TX — BladeRF flowgraph + MinIO->file bridge (ADR-012)
-- Parquet / Apache Iceberg analytical evolution
-
-See ADR-013 for the details of that refocus.
+When requested, AeroLake also stores IQEngine-compatible sidecars beside that pair: `capture.jpg`, `capture.preview.jpg`, and `capture.minimap`. They are derived convenience artifacts, not replacements for the SigMF recording.
 
 ## Requirements
 
-- WSL2 + Ubuntu 22.04+ (Windows) or native Linux / macOS
-- Docker Desktop with WSL2 integration
-- Python 3.12+ via uv (https://github.com/astral-sh/uv)
-- Git
+- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
+- Docker Desktop (for the local MinIO stack), or credentials for the lab S3/MinIO service
+- For real SDR capture: SoapySDR and the appropriate device driver
+- WSL2 is supported on Windows; Linux and macOS work natively
 
 ## Quick start
 
-    git clone <url>
-    cd aerolake
-    cp .env.example .env
-    uv sync
-    cd docker && docker compose up -d
+```bash
+git clone <repository-url>
+cd aerolake
+cp .env.example .env
+uv sync
+cd docker && docker compose up -d && cd ..
+uv run aerolake-healthcheck
+```
 
-## Main commands
+Configure the `AEROLAKE_S3_*` values in `.env` for a remote deployment. Never commit `.env` or real service-account credentials.
 
-    uv run aerolake-healthcheck
-    uv run aerolake-capture --config examples/capture.example.toml   # TOML (recommended) or JSON
-    uv run aerolake-ingest capture.sigmf-data --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6
-    uv run aerolake-ingest capture.sigmf-data                         # existing capture.sigmf-meta beside it
-    uv run aerolake-list --signal-type gnss_l1
-    uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name "campaign" --description "..."
-    uv run aerolake-play --prefix gnss_l1/
-    uv run aerolake-stream --prefix gnss_l1/
-    uv run aerolake-subscribe --address tcp://localhost:5555
+## Main workflows
 
-See `docs/cli-reference.md` for command details, especially the
-`aerolake-ingest` variants: generated metadata, existing SigMF pairs,
-and Iridium annotation. For metadata structure and required field shapes,
-use `examples/iqengine-metadata-schema-example.json` as the field-level reference.
+```bash
+# Record from a TOML or JSON configuration.
+uv run aerolake-capture --config examples/capture.example.toml
 
-In both ingest modes, AeroLake completes a pre-upload checklist. Raw source
-formats are validated and converted to normalized `cf32_le`. Existing SigMF
-pairs are parsed and validated, checked for sample alignment, verified against
-any existing `core:sha512`, enriched with a missing hash, and converted from
-`ci16_le` when necessary. The hash in uploaded metadata always describes the
-stored bytes; local source files are not modified.
+# Ingest a raw file. The first run creates an editable metadata template if needed.
+uv run aerolake-ingest capture.sigmf-data \
+  --signal-type gnss_l1 --sample-rate 2e6 --center-freq 1575.42e6
 
-Capture config files are written in **TOML (recommended — comments allowed) or
-JSON**, selected by the file extension; commented templates live in
-`examples/` (see `examples/README.md`).
+# Validate and upload an existing SigMF pair; generate/upload IQEngine sidecars.
+uv run aerolake-ingest capture.sigmf-data --iqengine
 
-## Web interface (GUI)
+# Browse directly in MinIO, without downloading IQ samples.
+uv run aerolake-list --catalog minio --signal-type gnss_l1
 
-A Streamlit interface to capture and replay **without a terminal** (optional
-extra). Two tabs: **Capture** (drop a TOML/JSON config, point the antenna on a
-map, capture, review the spectrum, push / keep / discard) and **Playback**
-(browse the lakehouse, view any time window's spectrum via HTTP Range,
-ready-to-run ZeroMQ command, SigMF export). Binds `0.0.0.0:8501`, so colleagues
-reach it at `http://<this-pc>:8501`.
+# Query the IQEngine catalog with its metadata filters.
+uv run aerolake-list --catalog iqengine --signal-type iridium --json
 
-**From a terminal:**
+# Generate sidecars locally (and optionally upload them).
+uv run aerolake-iqengine-artifacts capture.sigmf-data --upload --key-prefix iridium/2026-09-14/session
 
-    uv sync --extra gui
-    uv run aerolake-gui
+# Group captures, replay one, or publish it over ZeroMQ.
+uv run aerolake-collection --prefix gnss_l1/2026-06-17/ --name campaign --description "..."
+uv run aerolake-play --prefix gnss_l1/
+uv run aerolake-stream --prefix gnss_l1/
+uv run aerolake-subscribe --address tcp://localhost:5555
+```
 
-**No terminal (Windows + WSL):** double-click **`launch-gui.vbs`** to start
-(background, opens the browser) and **`stop-gui.vbs`** to stop — the GUI has no
-window to close. Use the `.bat` versions to see console output. For auto-start
-at boot, put a `launch-gui.vbs` shortcut in `shell:startup` (Win+R).
+`aerolake-ingest` preserves the recorded datatype and bytes. It validates sample alignment, verifies or adds `core:sha512`, and uploads metadata before the IQ object. Existing pairs require `aerolake:signal_type` in `global`; new single-file ingests stop after writing a template until all `<missing:...>` values are completed.
 
-The `.vbs` → `.bat` → `.sh` chain uses **no hardcoded paths** (it derives the
-repo's WSL path via `wslpath`). Per-PC setup:
+## IQEngine catalog and query CLI
 
-- **One-time in WSL** — make the scripts runnable and strip Windows CRLF endings
-  (they live on the Windows filesystem, which otherwise breaks bash):
+IQEngine is optional and does not own the capture files. It indexes the SigMF metadata already held in MinIO/S3; AeroLake communicates only with IQEngine's supported integration API, never its MongoDB internals.
 
-      chmod +x launch-gui.sh stop-gui.sh
-      sed -i 's/\r$//' launch-gui.sh stop-gui.sh
+Set these local `.env` variables when IQEngine is available:
 
-- **WSL2 + Ubuntu** installed; distro named `Ubuntu` (else set
-  `AEROLAKE_WSL_DISTRO` to your name from `wsl -l -q`).
-- **`uv` in WSL** — found on PATH or in `~/.local/bin`, `~/radioconda/bin`,
-  `~/miniconda3/bin`, `/usr/local/bin`.
-- Extra synced once (`uv sync --extra gui`); the first launch may take a minute.
+```dotenv
+AEROLAKE_IQENGINE_URL=https://<iqengine-host>
+AEROLAKE_IQENGINE_TOKEN=<dedicated-service-token>
+AEROLAKE_IQENGINE_ACCOUNT=<datasource-account>
+AEROLAKE_IQENGINE_CONTAINER=<datasource-container>
+# AEROLAKE_IQENGINE_PREFIX=<optional-datasource-prefix>
+```
 
-If nothing opens, run `launch-gui.bat` directly (the `.vbs` hides errors) — it
-prints the failure reason and the log tail
-(`\\wsl.localhost\Ubuntu\tmp\aerolake-gui.log`). To stop from WSL:
-`./stop-gui.sh` or `pkill -f "streamlit run src/aerolake/gui/app.py"`.
+Run `bash init-sync.sh` on Linux/WSL or `init-sync.bat` on Windows to request and wait for an initial datasource sync. Use `--catalog iqengine` when testing or requiring IQEngine: it fails rather than silently querying MinIO. `--catalog auto` uses IQEngine when configured and falls back to MinIO if it is unavailable.
 
-## Quality / tests
+The IQEngine query CLI accepts frequency and datetime bounds, text, author, location, operator, recorder, account/container selectors, signal type, and hardware. Use `--json` to see the selected catalog and freshness/sync state. See [docs/cli-reference.md](docs/cli-reference.md) for the complete syntax.
 
-    uv run ruff check .
-    uv run ruff format .
-    uv run mypy src
-    uv run pytest
+## Optional web interface
 
-An optional integration test (tests/integration/) runs against a real MinIO: AEROLAKE_RUN_INTEGRATION=1 uv run pytest -m integration
+The Streamlit GUI offers capture and playback without using the CLI:
 
-## Project layout
+```bash
+uv sync --extra gui
+uv run aerolake-gui
+```
 
-    aerolake/
-    ├── src/aerolake/
-    │   ├── common/     Configuration, storage (S3 chokepoint), logging
-    │   ├── producer/   Capture/ingestion -> SigMF -> MinIO
-    │   ├── consumer/   MinIO extraction (HTTP Range) -> ZeroMQ
-    │   ├── gui/        Streamlit web interface (optional [gui] extra)
-    │   └── scripts/    CLI entry points
-    ├── tests/          pytest tests (moto)
-    ├── docker/         local MinIO (docker-compose)
-    ├── gnuradio/       Record / Playback flowgraphs
-    └── docs/           Documentation and ADRs
+On Windows + WSL, `launch-gui.vbs` starts it in the background and opens the browser; use the `.bat` script when console output is useful. The GUI-generated `-preview.png` is distinct from the IQEngine sidecars.
 
 ## Documentation
 
-The docs/adr/ folder holds the Architectural Decision Records — the written trace of every design decision. ADR-013 documents the refocus on the mandate; the ADRs of archived components (006, 011, 012) are kept there and marked as such.
+- [docs/README.md](docs/README.md) — documentation index and reading paths
+- [docs/operator-cli-guide.md](docs/operator-cli-guide.md) — practical operator workflows
+- [docs/cli-reference.md](docs/cli-reference.md) — complete CLI and IQEngine query reference
+- [docs/IQENGINE-User-Manual.md](docs/IQENGINE-User-Manual.md) — IQEngine browser workflow
+- [HANDOFF.md](HANDOFF.md) — concise deployment and ownership handoff
+- [docs/handoff-document.md](docs/handoff-document.md) — detailed technical handoff
+- [docs/adr/](docs/adr/) — architectural decisions, including IQEngine integration (ADR-021–023) and byte-preserving ingest (ADR-024)
 
-Start here:
+Metadata references are in [examples/capture.sigmf-meta.example.json](examples/capture.sigmf-meta.example.json), [examples/short_24lines.ingest.sigmf-meta.example.json](examples/short_24lines.ingest.sigmf-meta.example.json), and [examples/iqengine-metadata-schema-example.json](examples/iqengine-metadata-schema-example.json).
 
-- **docs/operator-cli-guide.md** — CLI overview for people using AeroLake as a system; the short route for operators who are not reading the code.
-- **docs/cli-reference.md** — the full command reference and advanced CLI behavior.
-- **docs/handoff-document.md** — the complete handoff: concepts from zero, install, the whole code, the decisions and the roadmap. Start here if you are taking the project over.
-- **docs/code-map.md** — the whole codebase in one page.
-- **docs/user-manual.md** — daily use, no terminal needed.
-- **docs/code-documentation.md** — the class-by-class code reference.
-- **HANDOFF.md** — the operational cheat-sheet: set up a station, migrate the storage, transfer the repository.
+## Quality checks
 
-The whole repository — code, comments, documentation and ADRs — is written in English.
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+uv run pytest
+```
 
-## Authors
-
-Théo Schmitt — LASSENA
-
-Camila Nino Francia — Contributor
+Run the live MinIO integration tests only when a test service is intentionally available: `AEROLAKE_RUN_INTEGRATION=1 uv run pytest -m integration`.
